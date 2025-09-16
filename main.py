@@ -51,6 +51,7 @@ def read_dataframe(file_path: Optional[str] = None) -> Optional[pd.DataFrame]:
 def clean_dataframe_for_streamlit(df: pd.DataFrame) -> pd.DataFrame:
     """
     Limpa e prepara o DataFrame para ser compatível com o Streamlit/Arrow.
+    Implementa limpeza agressiva para resolver problemas de serialização.
     
     Args:
         df (pd.DataFrame): DataFrame original
@@ -60,37 +61,80 @@ def clean_dataframe_for_streamlit(df: pd.DataFrame) -> pd.DataFrame:
     """
     df_clean = df.copy()
     
-    # Tratamento especial para cada coluna
-    for col in df_clean.columns:
-        # Verificar se a coluna tem valores nulos
-        if df_clean[col].isna().all():
-            # Se toda a coluna é nula, converter para string
-            df_clean[col] = df_clean[col].astype('string')
-        elif df_clean[col].dtype == 'object':
-            # Para colunas object, tentar identificar o melhor tipo
-            try:
-                # Tentar converter para numérico primeiro
-                numeric_col = pd.to_numeric(df_clean[col], errors='coerce')
-                if not numeric_col.isna().all():
-                    # Se conseguiu converter alguns valores, manter como numérico
-                    df_clean[col] = numeric_col
-                else:
-                    # Se não conseguiu converter, manter como string
-                    df_clean[col] = df_clean[col].fillna('').astype('string')
-            except:
-                # Em caso de erro, forçar conversão para string
-                df_clean[col] = df_clean[col].fillna('').astype('string')
-        
-        # Tratamento especial para colunas mistas
-        elif df_clean[col].dtype.name.startswith('mixed'):
-            df_clean[col] = df_clean[col].fillna('').astype('string')
+    # Reset do índice para evitar problemas com índices complexos
+    df_clean = df_clean.reset_index(drop=True)
     
-    # Substituir valores problemáticos
-    for col in df_clean.select_dtypes(include=['object', 'string']).columns:
-        df_clean[col] = df_clean[col].fillna('')
-        # Converter para string se ainda não for
-        if df_clean[col].dtype != 'string':
+    # Tratamento agressivo para cada coluna
+    for col in df_clean.columns:
+        try:
+            df_clean[col] = df_clean[col].fillna('').astype(str).astype('string')
+            continue
+        
+            # Primeiro, tratar valores nulos
+            if df_clean[col].isna().all():
+                # Se toda a coluna é nula, criar coluna string vazia
+                df_clean[col] = pd.Series([''] * len(df_clean), dtype='string')
+                continue
+            
+            # Verificar se é numérica
+            if pd.api.types.is_numeric_dtype(df_clean[col]):
+                # Se já é numérica, manter mas garantir que não há valores problemáticos
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                continue
+            
+            # Para colunas não-numéricas, tentar conversão inteligente
+            if df_clean[col].dtype == 'object' or str(df_clean[col].dtype).startswith('mixed'):
+                # Tentar primeiro conversão numérica
+                try:
+                    numeric_test = pd.to_numeric(df_clean[col], errors='coerce')
+                    # Se mais de 50% dos valores foram convertidos com sucesso, manter numérico
+                    if numeric_test.notna().sum() / len(df_clean) > 0.5:
+                        df_clean[col] = numeric_test
+                        continue
+                except:
+                    pass
+                
+                # Tentar conversão para datetime
+                try:
+                    datetime_test = pd.to_datetime(df_clean[col], errors='coerce')
+                    # Se mais de 50% dos valores foram convertidos, manter datetime
+                    if datetime_test.notna().sum() / len(df_clean) > 0.5:
+                        df_clean[col] = datetime_test
+                        continue
+                except:
+                    pass
+                
+                # Se chegou até aqui, converter para string de forma segura
+                df_clean[col] = df_clean[col].fillna('').astype(str)
+                # Garantir que é string pandas nativa
+                df_clean[col] = df_clean[col].astype('string')
+            
+            else:
+                # Para outros tipos, tentar manter o tipo original
+                # mas garantir compatibilidade
+                if 'datetime' in str(df_clean[col].dtype):
+                    continue  # datetime já é compatível
+                elif 'bool' in str(df_clean[col].dtype):
+                    continue  # boolean já é compatível
+                else:
+                    # Converter para string como fallback
+                    df_clean[col] = df_clean[col].fillna('').astype(str).astype('string')
+                    
+        except Exception as e:
+            # Em caso de qualquer erro, forçar conversão para string
+            try:
+                df_clean[col] = df_clean[col].fillna('').astype(str).astype('string')
+            except:
+                # Último recurso: criar coluna string com representação do valor
+                df_clean[col] = pd.Series([str(x) if pd.notna(x) else '' for x in df_clean[col]], dtype='string')
+    
+    # Limpeza final: garantir que não há tipos problemáticos restantes
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
             df_clean[col] = df_clean[col].astype('string')
+    
+    # Verificar se há colunas com nomes problemáticos
+    df_clean.columns = [str(col).strip() for col in df_clean.columns]
     
     return df_clean
 
@@ -151,8 +195,8 @@ def create_info_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(info_data)
 
 # Configuração da página Streamlit
-st.set_page_config(page_title="Visualizador de Dados Universal", layout="wide")
-st.title("Visualizador de Dados Universal")
+st.set_page_config(page_title="Visualizador de Dados", layout="wide")
+st.title("Visualizador de Dados")
 st.markdown("Suporta arquivos: .parquet, .pkl, .pickle, .csv, .xlsx")
 
 # Campo para inserir o caminho do arquivo
@@ -205,12 +249,47 @@ if 'file_loaded' in st.session_state and st.session_state['file_loaded']:
                 st.warning(f"Exibindo apenas as primeiras 20 colunas de {len(df_clean.columns)} total.")
                 display_df = display_df.iloc[:, :20]
             
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width='stretch')
         except Exception as e:
             st.error(f"Erro ao exibir dados: {str(e)}")
             st.write("Tentando exibir em formato alternativo...")
             # Fallback: mostrar como texto
             st.text(str(df_clean.head()))
+        
+        # Seção de opções avançadas apenas nesta aba
+        with st.expander("🔧 Opções Avançadas"):
+            st.write("### Filtros e Visualizações")
+            
+            # Seleção de colunas para visualizar
+            selected_columns = st.multiselect(
+                "Selecione colunas específicas para visualizar:",
+                options=list(df_clean.columns),
+                default=list(df_clean.columns[:5]) if len(df_clean.columns) >= 5 else list(df_clean.columns)
+            )
+            
+            if selected_columns:
+                st.write(f"### Dados das Colunas Selecionadas ({len(selected_columns)} colunas):")
+                try:
+                    st.dataframe(df_clean[selected_columns].head(100), width='stretch')
+                except Exception as e:
+                    st.error(f"Erro ao exibir colunas selecionadas: {str(e)}")
+                    # Fallback ainda mais seguro
+                    st.write("**Primeira linha das colunas selecionadas:**")
+                    for col in selected_columns:
+                        st.write(f"- **{col}**: {str(df_clean[col].iloc[0]) if len(df_clean) > 0 else 'N/A'}")
+            
+            # Opção para download dos dados limpos
+            if st.button("💾 Baixar dados limpos como CSV"):
+                try:
+                    csv = df_clean.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv,
+                        file_name="dados_limpos.csv",
+                        mime="text/csv"
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao preparar download: {str(e)}")
     
     with tab3:
         st.write("### Estatísticas básicas:")
@@ -219,7 +298,7 @@ if 'file_loaded' in st.session_state and st.session_state['file_loaded']:
             numeric_cols = df_original.select_dtypes(include=[np.number]).columns
             if len(numeric_cols) > 0:
                 stats_df = df_original[numeric_cols].describe()
-                st.dataframe(stats_df, use_container_width=True)
+                st.dataframe(stats_df, width='stretch')
             else:
                 st.info("Nenhuma coluna numérica encontrada para estatísticas.")
         except Exception as e:
@@ -229,28 +308,16 @@ if 'file_loaded' in st.session_state and st.session_state['file_loaded']:
         st.write("### Informações das Colunas:")
         try:
             info_df = create_info_dataframe(df_original)
-            st.dataframe(info_df, use_container_width=True)
+            st.dataframe(info_df, width='stretch')
         except Exception as e:
             st.error(f"Erro ao criar tabela de informações: {str(e)}")
-    
-    # Seção adicional para exploração
-    with st.expander("🔧 Opções Avançadas"):
-        st.write("### Filtros e Visualizações")
-        
-        # Seleção de colunas para visualizar
-        selected_columns = st.multiselect(
-            "Selecione colunas específicas para visualizar:",
-            options=list(df_clean.columns),
-            default=list(df_clean.columns[:5]) if len(df_clean.columns) >= 5 else list(df_clean.columns)
-        )
-        
-        if selected_columns:
-            st.write(f"### Dados das Colunas Selecionadas ({len(selected_columns)} colunas):")
-            try:
-                st.dataframe(df_clean[selected_columns].head(100), use_container_width=True)
-            except Exception as e:
-                st.error(f"Erro ao exibir colunas selecionadas: {str(e)}")
-
+            # Fallback: mostrar informações básicas
+            st.write("**Informações básicas das colunas:**")
+            for i, col in enumerate(df_original.columns):
+                if i < 10:  # Limitar a 10 primeiras colunas no fallback
+                    st.write(f"- **{col}**: {str(df_original[col].dtype)} | Nulos: {df_original[col].isna().sum()}")
+                elif i == 10:
+                    st.write(f"... e mais {len(df_original.columns) - 10} colunas")
 else:
     st.info("👆 Digite o caminho do arquivo acima e clique em 'Carregar Arquivo' para começar.")
     st.markdown("""
@@ -266,6 +333,8 @@ else:
     - ✅ Estatísticas básicas
     - ✅ Tratamento automático de tipos de dados problemáticos
     - ✅ Interface organizada em abas
+    - ✅ Opções avançadas de filtragem
+    - ✅ Download de dados limpos
     """)
 
 # Comando para executar: streamlit run main.py
