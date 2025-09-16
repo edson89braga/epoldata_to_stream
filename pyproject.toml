@@ -1,0 +1,24 @@
+[project]
+name = "data-to-stream"
+version = "0.1.0"
+description = "..."
+authors = [
+    {name = "Edson Braga",email = "edson89braga@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas (>=2.3.2,<3.0.0)",
+    "streamlit (>=1.49.1,<2.0.0)",
+    "rich (>=13.7.0)",
+    "openpyxl (>=3.1.2)",
+    "pyarrow (>=21.0.0,<22.0.0)",
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
