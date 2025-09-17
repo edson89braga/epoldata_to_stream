@@ -91,11 +91,17 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, Dict]:
     column_info = {}
 
     for col in df.columns:
+        # Lida com tipos não "hashable" (como listas/arrays) que quebram o .nunique()
+        try:
+            unique_count = df[col].nunique()
+        except TypeError:
+            unique_count = -1  # Indica que a contagem de únicos não é aplicável
+
         info = {
             "original_dtype": str(df[col].dtype),
             "null_count": df[col].isna().sum(),
             "null_percent": (df[col].isna().sum() / len(df)) * 100,
-            "unique_count": df[col].nunique(),
+            "unique_count": unique_count,
             "sample_values": [],
             "can_be_numeric": False,
             "can_be_datetime": False,

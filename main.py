@@ -11,6 +11,23 @@ from data_processing import (
     sanitize_for_streamlit,
 )
 
+# Variáveis hardcoded:
+start_file = "C:\\Users\\edson.eab\\Downloads\\Casos_SRSP_16-09-2025-Filtrado.parquet"
+placeholders_to_drop = ['-', '', 'None', '<NA>', 'nan', 'undefined']
+
+filter_cols = ['Proc. Tipo', 'Proc. Situação', 'Situação Sigla', 'Proc. Delegacia']
+
+area_cols = [
+    'Proc. Tipo Documento', 'Proc. Origem Documento', 
+    'Proc. Área de Atribuição', 'Proc. Tipo Penal', 
+    'Proc. Incidência Penal Principal',
+    'Proc. Tratamento Especial', 'Matéria Registro Especial'
+]
+
+coluna_com_listas = 'Proc. Tipo Penal'
+
+# ---
+
 # Configuração da página Streamlit
 st.set_page_config(page_title="Visualizador de Dados", layout="wide")
 st.title("🔍 Visualizador de Dados")
@@ -19,7 +36,7 @@ st.markdown("Suporta arquivos: .parquet, .pkl, .pickle, .csv, .xlsx")
 # Campo para inserir o caminho do arquivo
 file_path = st.text_input(
     "📁 Digite o caminho do arquivo:",
-    value="C:\\Users\\edson.eab\\Downloads\\df_bi_only_procs.parquet",
+    value=start_file,
     help="Caminho completo para o arquivo de dados",
 )
 
@@ -64,8 +81,8 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
     print_dataframe_info(df_final)
 
     # Criando abas para melhor organização
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 Visão Geral", "🔍 Amostra dos Dados", "📈 Estatísticas", "ℹ️ Info das Colunas"]
+    tab2, tab3, tab4, tab1, tab5 = st.tabs(
+        ["🔍 Amostra dos Dados", "📈 Estatísticas", "ℹ️ Info das Colunas", "📊 Visão Geral", "🗂️ Análise por Área"]
     )
 
     with tab1:
@@ -109,22 +126,48 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
             st.rerun()
 
     with tab2:
+        st.markdown("### 📥 Filtros e Amostra dos Dados")
+        
+        # DataFrame a ser filtrado
+        filtered_df = df_final.copy()
+        
+        # Seção de filtros
+        with st.expander("🔍 Aplicar Filtros"):
+            selections = {}
+
+            for col_name in filter_cols:
+                if col_name in filtered_df.columns:
+                    options = sorted(filtered_df[col_name].dropna().unique())
+                    selections[col_name] = st.multiselect(
+                        f"Filtrar por **{col_name}**:",
+                        options=options,
+                        default=[]
+                    )
+        
+            # Aplicar filtros
+            for col_name, selected_values in selections.items():
+                if selected_values:
+                    filtered_df = filtered_df[filtered_df[col_name].isin(selected_values)]
+
+        # Exibir métrica de resultados
+        st.info(f"Mostrando **{len(filtered_df):,}** de **{len(df_final):,}** registros.")
+                
         st.markdown("### Primeiras linhas do DataFrame:")
         try:
-            display_df = df_final.head(100)
-            if len(df_final.columns) > 20:
+            display_df = filtered_df.head(100)
+            if len(filtered_df.columns) > 30:
                 st.warning(
-                    f"Exibindo apenas as primeiras 20 colunas de {len(df_final.columns)} total."
+                    f"Exibindo apenas as primeiras 30 colunas de {len(filtered_df.columns)} total."
                 )
-                display_df = display_df.iloc[:, :20]
+                display_df = display_df.iloc[:, :30]
 
             st.dataframe(sanitize_for_streamlit(display_df))
         except Exception as e:
             st.error(f"Erro ao exibir dados: {str(e)}")
             st.markdown("**Tentativa alternativa - Informações básicas:**")
-            for col in df_final.columns[:5]:
+            for col in filtered_df.columns[:5]:
                 st.write(
-                    f"**{col}**: {df_final[col].dtype} - Exemplo: {df_final[col].iloc[0] if len(df_final) > 0 else 'N/A'}"
+                    f"**{col}**: {filtered_df[col].dtype} - Exemplo: {filtered_df[col].iloc[0] if len(filtered_df) > 0 else 'N/A'}"
                 )
 
         # Opções avançadas apenas nesta aba
@@ -133,10 +176,10 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
 
             selected_columns = st.multiselect(
                 "Selecione colunas específicas para visualizar:",
-                options=list(df_final.columns),
-                default=list(df_final.columns[:5])
-                if len(df_final.columns) >= 5
-                else list(df_final.columns),
+                options=list(filtered_df.columns),
+                default=list(filtered_df.columns[:5])
+                if len(filtered_df.columns) >= 5
+                else list(filtered_df.columns),
             )
 
             if selected_columns:
@@ -144,7 +187,7 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
                     f"### 📋 Dados das Colunas Selecionadas ({len(selected_columns)} colunas):"
                 )
                 try:
-                    st.dataframe(sanitize_for_streamlit(df_final[selected_columns].head(100)))
+                    st.dataframe(sanitize_for_streamlit(filtered_df[selected_columns].head(100)))
                 except Exception as e:
                     st.error(f"Erro ao exibir colunas selecionadas: {str(e)}")
 
@@ -155,7 +198,7 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
             with col1:
                 if st.button("📥 Baixar como CSV"):
                     try:
-                        csv = df_final.to_csv(index=False)
+                        csv = filtered_df.to_csv(index=False)
                         st.download_button(
                             label="⬇️ Download CSV",
                             data=csv,
@@ -170,7 +213,7 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
                 if st.button("📥 Baixar como Parquet"):
                     try:
                         # Converter para parquet em bytes
-                        parquet_buffer = df_final.to_parquet(index=False)
+                        parquet_buffer = filtered_df.to_parquet(index=False)
                         st.download_button(
                             label="⬇️ Download Parquet",
                             data=parquet_buffer,
@@ -244,6 +287,61 @@ if st.session_state["types_configured"] and st.session_state["df_final"] is not 
                     )
                 elif i == 10:
                     st.write(f"... e mais {len(df_final.columns) - 10} colunas")
+
+    with tab5:
+        st.markdown("### 🗂️ Análise por Área Associada")
+        st.markdown("Distribuição de valores para colunas relacionadas à área.")
+
+        for col_name in area_cols:
+            if col_name in df_final.columns:
+                st.markdown(f"---")
+                st.markdown(f"#### Distribuição por: `{col_name}`")                
+
+                # Cria uma cópia da série para análise
+                series_to_analyze = df_final[col_name].copy()
+
+                # Lógica especial para se contiver listas (ou strings de listas)
+                if col_name == coluna_com_listas:
+                    # Converte strings que parecem listas de volta para listas
+                    # Isso corrige o problema se o tipo foi configurado como string
+                    is_stringified_list = series_to_analyze.dropna().apply(
+                        lambda x: isinstance(x, str) and x.startswith('[') and x.endswith(']')
+                    ).any()
+
+                    if is_stringified_list:
+                        import ast
+                        st.info("Detectamos strings de listas e as convertemos para análise.")
+                        series_to_analyze = series_to_analyze.apply(
+                            lambda x: ast.literal_eval(x) if (isinstance(x, str) and x.startswith('[')) else x
+                        )
+
+                    # Verifica se a coluna agora contém listas e a "explode"
+                    if series_to_analyze.dropna().apply(isinstance, args=(list,)).any():
+                        st.info("Esta coluna foi 'explodida' para contar cada tipo penal individualmente.")
+                        series_to_analyze = series_to_analyze.explode()
+
+                # Calcula a contagem de valores
+                value_counts = series_to_analyze.value_counts().reset_index()
+                value_counts.columns = [col_name, 'Contagem']
+
+                # Para o gráfico, usamos nomes de coluna genéricos e consistentes
+                # para evitar que o Streamlit se confunda em cada iteração do loop.
+                chart_data = value_counts.copy()
+                chart_data.columns = ['Categoria', 'Contagem']
+
+                # Prepara dados para o gráfico, removendo valores nulos/placeholders comuns
+                chart_data['Categoria'] = chart_data['Categoria'].astype(str) # Garante que tudo é string para comparação
+                chart_data = chart_data[~chart_data['Categoria'].isin(placeholders_to_drop)]
+
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.markdown("**Contagem Total (incluindo nulos)**")
+                    st.dataframe(value_counts)
+                with col2:
+                    st.markdown("**Top 15 Valores Válidos**")
+                    st.bar_chart(chart_data.head(15), x='Categoria', y='Contagem')
+            else:
+                st.warning(f"A coluna '{col_name}' não foi encontrada no DataFrame.")
 
 # Se o arquivo foi carregado, mas os tipos não configurados, mostrar a tela de configuração
 elif st.session_state["file_loaded"]:
