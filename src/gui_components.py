@@ -4,6 +4,43 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from . import config
+from . import state_manager
+
+def create_header(df: pd.DataFrame):
+    """Cria um cabeçalho fixo com título, KPIs e controles globais."""
+    with st.container():
+        c1, c2 = st.columns([0.8, 0.2])
+        with c1:
+            st.title("Dashboard de Análise de Casos")
+        
+        with c2:
+            st.button(
+                "Recolher Tudo" if st.session_state.expanders_state else "Expandir Tudo",
+                on_click=state_manager.toggle_expanders_state,
+                use_container_width=True
+            )
+            
+        # KPIs
+        kpi1, kpi2, kpi3 = st.columns(3)
+        total_casos = df[config.KEY_COLUMN_PRINCIPAL].nunique()
+        casos_em_andamento = df[df['Situação'] == 'Em Andamento'][config.KEY_COLUMN_PRINCIPAL].nunique()
+        duracao_media = df[df['Duração Dias'] > 0]['Duração Dias'].mean()
+
+        kpi1.metric("Total de Casos", f"{total_casos:,}".replace(",", "."))
+        kpi2.metric("Casos em Andamento", f"{casos_em_andamento:,}".replace(",", "."))
+        kpi3.metric("Duração Média (Dias)", f"{duracao_media:.0f}" if not pd.isna(duracao_media) else "N/A")
+        
+        st.divider()
+
+def display_home_tab():
+    """Exibe o conteúdo da aba 'Início'."""
+    st.header("Bem-vindo ao Dashboard de Análise de Casos")
+    st.markdown("""
+    Este painel interativo foi projetado para explorar e analisar os dados de casos.
+    Utilize os filtros na barra lateral para segmentar os dados de acordo com seu interesse.
+    - **Tabela Geral**: Visualize os dados brutos filtrados e faça o download em formato Excel.
+    - **Agregações**: Explore distribuições e contagens por diferentes categorias.
+    """)
 
 @st.cache_data
 def to_excel(df: pd.DataFrame) -> bytes:
@@ -102,14 +139,21 @@ def display_general_table_tab(df: pd.DataFrame, selected_columns: list[str]):
 
 def display_aggregations_tab(df: pd.DataFrame):
     """Exibe o conteúdo da aba 'Agregações'."""
-    st.header("Agregações por Categoria")
+    c1, c2 = st.columns([0.8, 0.2])
+    with c1:
+        st.header("Agregações por Categoria")
+    with c2:
+        st.button(
+            "Recolher Tudo" if st.session_state.expanders_state else "Expandir Tudo",
+            on_click=state_manager.toggle_expanders_state)
+        
     st.info(f"Exibindo até 15 Colunas por gráfico.")
     for col_agg in config.LIST_AGREGATION_VIEWS:
         if col_agg not in df.columns:
             st.warning(f"A coluna de agregação '{col_agg}' não foi encontrada nos dados.")
             continue
 
-        with st.expander(f"Análise por: {col_agg}", expanded=True):
+        with st.expander(f"Análise por: {col_agg}", expanded=st.session_state.expanders_state):
             # Prepara os dados para agregação
             df_agg = df.copy()
             df_agg[col_agg] = df_agg[col_agg].fillna("Não Informado")
@@ -120,6 +164,11 @@ def display_aggregations_tab(df: pd.DataFrame):
             agg_data.columns = [col_agg, 'Contagem']
             total_casos = agg_data['Contagem'].sum()
             agg_data['Percentual'] = (agg_data['Contagem'] / total_casos * 100)
+
+            agg_data = agg_data.sort_values(
+                by="Percentual",
+                ascending=False
+            ).reset_index(drop=True)
            
             # Exibição
             col_table, col_chart = st.columns([0.5, 0.5], vertical_alignment='center')
@@ -136,7 +185,7 @@ def display_aggregations_tab(df: pd.DataFrame):
             with col_chart:
                 # Controles de ordenação específicos para o gráfico em um container
                 with st.container():
-                    ctrl_cols = st.columns((1, 0.7, 1.3), vertical_alignment='center')
+                    ctrl_cols = st.columns((0.8, 0.7, 1.5), vertical_alignment='center')
                     ctrl_cols[0].markdown("**Ordenação do Gráfico**")
                     sort_order_chart = ctrl_cols[1].radio(
                         "Ordem", ["Decrescente", "Crescente"], key=f"order_chart_{col_agg}", horizontal=True, label_visibility="collapsed"
