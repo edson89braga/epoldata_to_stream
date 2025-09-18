@@ -223,6 +223,12 @@ df_reduzido = filter_columns(df_completo, colunas_uteis)
 output_path = r"C:\\Users\\edson.eab\\Downloads\\Casos_SRSP_16-09-2025-Filtrado.parquet"
 df_reduzido.to_parquet(output_path, index=False)
 
+filtered_df = df.loc[df['Proc. Situação'] == "Em Andamento"]
+filtered_df.to_excel(r"C:\\Users\\edson.eab\\Downloads\\Casos-andamento_SRSP_16-09-2025.xlsx", index=False)
+
+exloded_df = filtered_df.explode('Proc. Tipo Penal')
+exloded_df.to_excel(r"C:\\Users\\edson.eab\\Downloads\\Casos-andamento_SRSP_16-09-2025_TiposPenal.xlsx", index=False)
+
 '''
 
 '''

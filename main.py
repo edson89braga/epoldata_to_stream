@@ -15,7 +15,7 @@ from data_processing import (
 start_file = "C:\\Users\\edson.eab\\Downloads\\Casos_SRSP_16-09-2025-Filtrado.parquet"
 placeholders_to_drop = ['-', '', 'None', '<NA>', 'nan', 'undefined']
 
-filter_cols = ['Proc. Tipo', 'Proc. Situação', 'Situação Sigla', 'Proc. Delegacia']
+filter_cols = ['Proc. Tipo', 'Proc. Situação', 'Situação Sigla', 'Proc. Delegacia'] # TODO: Na verdade, todas colunas devem ser filtro, em vez desta lista apenas.
 
 area_cols = [
     'Proc. Tipo Documento', 'Proc. Origem Documento', 
