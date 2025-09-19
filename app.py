@@ -1,13 +1,16 @@
 # app.py
 import streamlit as st
-from src import data_loader, gui_components, state_manager
+from src import data_loader, gui_components, state_manager, config
 
-st.set_page_config(layout="wide", page_title="Análise de Casos")
+st.set_page_config(layout="wide", page_title=config.TITULO)
 
 def main():
     """Função principal que executa a aplicação Streamlit."""
 
     # st.title("Dashboard de Análise de Casos")
+
+    # Carrega o CSS customizado para ajustar espaçamentos
+    gui_components.load_custom_css()
 
     # Inicializa o estado da sessão
     state_manager.initialize_state()
@@ -20,14 +23,14 @@ def main():
         return
 
     # A sidebar agora retorna o dataframe filtrado e as colunas a serem exibidas
-    df_filtered, selected_columns = gui_components.create_sidebar(df_tratado)
+    df_filtered = gui_components.create_sidebar(df_tratado)
 
     # Cria o cabeçalho fixo com título e KPIs
     # gui_components.create_header(df_filtered)
 
     # Cria as abas principais da aplicação
     tab_inicio, tab_geral, tab_agregacoes = st.tabs([
-        "Início", "Tabela Geral", "Agregações"
+        "📊 Início", "📋 Tabela Geral", "📈 Agregações"
     ])
 
     with tab_inicio:
@@ -35,7 +38,7 @@ def main():
 
     with tab_geral:
         # Passa o DF filtrado e as colunas selecionadas
-        gui_components.display_general_table_tab(df_filtered, selected_columns)
+        gui_components.display_general_table_tab(df_filtered)
 
     with tab_agregacoes:
         # A aba de agregações opera sobre os dados já filtrados

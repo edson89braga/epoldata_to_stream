@@ -17,6 +17,6 @@
     - o gráfico deve possuir toggle de pelo menos dois modos: Colunas e Pizza;
     - A contagem de valores é sempre referente à key_column principal;
 
-
+- info dataframe
 - explode columns específicas
 - eliminação de null values 

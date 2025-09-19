@@ -3,23 +3,47 @@ import io
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from . import config
 from . import state_manager
+
+def load_custom_css():
+    """Carrega CSS customizado para compactar a UI."""
+    st.markdown("""
+        <style>
+            /* Define a largura inicial da barra lateral */
+            [data-testid="stSidebar"][aria-collapsed="false"] {
+                min-width: 300px; /* !important é necessário para sobrescrever o estilo padrão */
+            }
+
+            /* Ajusta a posição vertical das abas */
+            div[data-testid="stTabs"] {
+                margin-top: -35px;
+            }
+                
+            /* Realça os rótulos das abas (sem fixação) */
+            button[data-baseweb="tab"] {
+                font-size: 1.1rem !important;
+                font-weight: 600 !important;
+            }
+                
+            /* Realça a aba ativa com a cor primária do tema */
+            button[data-baseweb="tab"][aria-selected="true"] {
+                color: var(--primary-color) !important;
+                border-bottom-color: var(--primary-color) !important;
+            }
+
+            /* Reduz o espaçamento inferior dos grupos de botões de rádio */
+            div[data-testid="stRadio"] {
+                margin-bottom: -25px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
 
 def create_header(df: pd.DataFrame):
     """Cria um cabeçalho fixo com título, KPIs e controles globais."""
     with st.container():
-        c1, c2 = st.columns([0.8, 0.2])
-        with c1:
-            st.title("Dashboard de Análise de Casos")
-        
-        with c2:
-            st.button(
-                "Recolher Tudo" if st.session_state.expanders_state else "Expandir Tudo",
-                on_click=state_manager.toggle_expanders_state,
-                use_container_width=True
-            )
-            
+        st.title(config.TITULO)            
         # KPIs
         kpi1, kpi2, kpi3 = st.columns(3)
         total_casos = df[config.KEY_COLUMN_PRINCIPAL].nunique()
@@ -34,13 +58,8 @@ def create_header(df: pd.DataFrame):
 
 def display_home_tab():
     """Exibe o conteúdo da aba 'Início'."""
-    st.header("Bem-vindo ao Dashboard de Análise de Casos")
-    st.markdown("""
-    Este painel interativo foi projetado para explorar e analisar os dados de casos.
-    Utilize os filtros na barra lateral para segmentar os dados de acordo com seu interesse.
-    - **Tabela Geral**: Visualize os dados brutos filtrados e faça o download em formato Excel.
-    - **Agregações**: Explore distribuições e contagens por diferentes categorias.
-    """)
+    st.header(config.INFO_HEADER)
+    st.markdown(config.INFO_MD, unsafe_allow_html=True)
 
 @st.cache_data
 def to_excel(df: pd.DataFrame) -> bytes:
@@ -55,36 +74,31 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     Cria a barra lateral de filtros e retorna o DataFrame filtrado
     e as colunas selecionadas para exibição.
     """
-    st.sidebar.header("Filtros")
+    # st.sidebar.header("Filtros")
     
     df_filtered = df.copy()
     
     # Filtro para selecionar colunas
     all_columns = df.columns.tolist()
-    selected_columns = st.sidebar.multiselect(
-        "Selecione as colunas para exibir:",
-        options=all_columns,
-        default=all_columns
-    )
 
     # Filtros principais
-    st.sidebar.subheader("Filtros Principais")
-    for col in all_columns:
-        if col in config.JSON_FILTROS_SECUNDARIOS:
-            continue
+    with st.sidebar.expander("Filtros Principais", expanded=True):
+        for col in all_columns:
+            if col in config.JSON_FILTROS_SECUNDARIOS:
+                continue
 
-        default_value = []
-        if col in config.JSON_FILTROS_DEFAULT:
-            default_value = config.JSON_FILTROS_DEFAULT[col]
-        
-        options = sorted(df[col].dropna().unique())
-        selected = st.sidebar.multiselect(
-            f"Filtrar {col}",
-            options=options,
-            default=default_value
-        )
-        if selected:
-            df_filtered = df_filtered[df_filtered[col].isin(selected)]
+            default_value = []
+            if col in config.JSON_FILTROS_DEFAULT:
+                default_value = config.JSON_FILTROS_DEFAULT[col]
+            
+            options = sorted(df[col].dropna().unique())
+            selected = st.multiselect(
+                f"Filtrar {col}",
+                options=options,
+                default=default_value
+            )
+            if selected:
+                df_filtered = df_filtered[df_filtered[col].isin(selected)]
 
     # Filtros secundários em um expander
     with st.sidebar.expander("Filtros Secundários", expanded=False):
@@ -99,12 +113,18 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                 if selected:
                     df_filtered = df_filtered[df_filtered[col].isin(selected)]
     
-    return df_filtered, selected_columns if selected_columns else all_columns
+    return df_filtered
 
-def display_general_table_tab(df: pd.DataFrame, selected_columns: list[str]):
+def display_general_table_tab(df: pd.DataFrame):
     """Exibe o conteúdo da aba 'Tabela Geral'."""
     st.header(f"Visualização Geral dos Dados")
-    st.metric("Total de Registros Encontrados", f"{len(df):,}".replace(",", "."))
+    st.metric("Total de Registros Filtrados", f"{len(df):,}".replace(",", "."))
+    
+    selected_columns = st.multiselect(
+        "Selecione as colunas a exibir:",
+        options=df.columns.tolist(),
+        default=df.columns.tolist()
+    )
 
     col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
     with col1:
@@ -124,57 +144,74 @@ def display_general_table_tab(df: pd.DataFrame, selected_columns: list[str]):
     df_sorted = df.sort_values(by=sort_col, ascending=is_ascending)
     
     st.info(f"Exibindo os {config.N_LINHAS_VISIVEIS} primeiros registros da tabela ordenada.")
-
-    st.dataframe(
-        df_sorted[selected_columns].head(config.N_LINHAS_VISIVEIS),
-    )
     
+    st.dataframe(df_sorted[selected_columns].head(config.N_LINHAS_VISIVEIS))
+
     excel_file = to_excel(df_sorted[selected_columns])
     st.download_button(
-        label="📥 Download (XLSX)",
+        label="📥 Download (xlsx)",
         data=excel_file,
         file_name="dados_filtrados.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+# @st.cache_data # cache estava causando um erro de sincronismo com dataframe
+def prepare_agg_data(_df: pd.DataFrame, _col_agg: str) -> pd.DataFrame:
+    """
+    Prepara e agrega os dados para uma coluna específica.
+    """
+    df_agg = _df.copy()
+    df_agg[_col_agg] = df_agg[_col_agg].fillna("Não Informado")
+    df_agg = df_agg[~df_agg[_col_agg].isin(config.NULLS_PLACEHOLDERS_TO_DROP)]
+    
+    agg_data = df_agg.groupby(_col_agg)[config.KEY_COLUMN_PRINCIPAL].nunique().reset_index()
+    agg_data.columns = [_col_agg, 'Contagem']
+    total_casos = agg_data['Contagem'].sum()
+    
+    if total_casos > 0:
+        agg_data['Percentual'] = (agg_data['Contagem'] / total_casos * 100)
+    else:
+        agg_data['Percentual'] = 0
+        
+    return agg_data
+
 def display_aggregations_tab(df: pd.DataFrame):
     """Exibe o conteúdo da aba 'Agregações'."""
-    c1, c2 = st.columns([0.8, 0.2])
+    c1, c2 = st.columns([0.8, 0.2], vertical_alignment="center")
     with c1:
-        st.header("Agregações por Categoria")
+        st.header("Agregações de Dados")
     with c2:
         st.button(
             "Recolher Tudo" if st.session_state.expanders_state else "Expandir Tudo",
             on_click=state_manager.toggle_expanders_state)
         
-    st.info(f"Exibindo até 15 Colunas por gráfico.")
+    st.info("As visualizações de agregação são baseadas nos dados atualmente filtrados. Os gráficos exibem até 15 resultados cada.")
     for col_agg in config.LIST_AGREGATION_VIEWS:
         if col_agg not in df.columns:
             st.warning(f"A coluna de agregação '{col_agg}' não foi encontrada nos dados.")
             continue
+        
+        category_label = col_agg.upper()
+        with st.expander(f"Análise por: {category_label}", expanded=st.session_state.expanders_state):
+            
+            agg_data = prepare_agg_data(df, col_agg)
 
-        with st.expander(f"Análise por: {col_agg}", expanded=st.session_state.expanders_state):
-            # Prepara os dados para agregação
-            df_agg = df.copy()
-            df_agg[col_agg] = df_agg[col_agg].fillna("Não Informado")
-            df_agg = df_agg[~df_agg[col_agg].isin(config.NULLS_PLACEHOLDERS_TO_DROP)]
-
-            # Lógica de agregação
-            agg_data = df_agg.groupby(col_agg)[config.KEY_COLUMN_PRINCIPAL].nunique().reset_index()
-            agg_data.columns = [col_agg, 'Contagem']
-            total_casos = agg_data['Contagem'].sum()
-            agg_data['Percentual'] = (agg_data['Contagem'] / total_casos * 100)
-
-            agg_data = agg_data.sort_values(
-                by="Percentual",
-                ascending=False
-            ).reset_index(drop=True)
-           
-            # Exibição
-            col_table, col_chart = st.columns([0.5, 0.5], vertical_alignment='center')
-            with col_table:
-                st.dataframe(
-                    agg_data,
+            def _render_chart_controls(container):
+                with container.container():
+                    # Controles específicos para o gráfico em um container
+                    c1, c2, c3, c4 = st.columns(4, vertical_alignment="center")
+                    chart_type = c1.radio("Gráfico Tipo", ["Colunas", "Circular"], key=f"chart_type_{col_agg}", horizontal=True)
+                    color_mode = c2.radio("Cor", ["Monocromático", "Multicolor"], key=f"color_mode_{col_agg}", horizontal=True)
+                    sort_by_chart = c3.radio("Ordenar por", ["Percentual", col_agg], key=f"sort_chart_{col_agg}", horizontal=True)
+                    sort_order_chart = c4.radio("Ordem", ["Decrescente", "Crescente"], key=f"order_chart_{col_agg}", horizontal=True)
+                return chart_type, color_mode, sort_by_chart, sort_order_chart
+            
+            # --- Funções de Renderização ---
+            def render_table(container):
+                # Ordena os dados para exibição na tabela
+                sorted_data = agg_data.sort_values(by="Contagem", ascending=False).reset_index(drop=True)
+                container.dataframe(
+                    sorted_data, # width=True,
                     column_config={
                         "Percentual": st.column_config.ProgressColumn(
                             "Percentual (%)", format="%.2f%%", min_value=0, max_value=100
@@ -182,33 +219,95 @@ def display_aggregations_tab(df: pd.DataFrame):
                     }
                 )
 
-            with col_chart:
-                # Controles de ordenação específicos para o gráfico em um container
-                with st.container():
-                    ctrl_cols = st.columns((0.8, 0.7, 1.5), vertical_alignment='center')
-                    ctrl_cols[0].markdown("**Ordenação do Gráfico**")
-                    sort_order_chart = ctrl_cols[1].radio(
-                        "Ordem", ["Decrescente", "Crescente"], key=f"order_chart_{col_agg}", horizontal=True, label_visibility="collapsed"
-                    )
-                    sort_by_chart = ctrl_cols[2].radio(
-                        "Ordenar por", ["Percentual", col_agg], key=f"sort_chart_{col_agg}", horizontal=True, label_visibility="collapsed"
-                    )
-
-                # Garante que o gráfico sempre mostre o Top 15 com base na contagem
-                top_15_data = agg_data.sort_values(by='Contagem', ascending=False).head(15)
+            def render_chart(container, chart_type, color_mode, sort_by_chart, sort_order_chart):
                 
-                # Aplica a ordenação dos controles ao subconjunto Top 15
-                chart_data = top_15_data.sort_values(
+                # A ordenação para pegar o Top 15 e a ordenação para exibição são feitas aqui
+                chart_data = agg_data.sort_values(by='Contagem', ascending=False).head(15).sort_values(
                     by=sort_by_chart,
                     ascending=(sort_order_chart == "Crescente")
                 )
 
-                fig = px.bar(
-                    chart_data, 
-                    x=col_agg,
-                    y='Contagem',
-                    #title=f'Top 15 - {col_agg}',
-                    text_auto=True
+                color_arg = col_agg if color_mode == "Multicolor" else None
+
+                if chart_type == "Colunas":
+                    if color_mode == "Monocromático":
+                        # Usa graph_objects para criar uma legenda por barra
+                        fig = go.Figure()
+                        for index, row in chart_data.iterrows():
+                            fig.add_trace(go.Bar(
+                                x=[row[col_agg]],
+                                y=[row['Contagem']],
+                                name=str(row[col_agg]),
+                                text=row['Contagem'],
+                                textposition='auto',
+                                marker_color='rgb(31, 119, 180)' # Cor azul padrão do Plotly
+                            ))
+                        fig.update_layout(barmode='stack', showlegend=True)
+                    
+                    else: # Multicolorido
+                        fig = px.bar(chart_data, x=col_agg, y='Contagem', text_auto=True, color=col_agg)
+
+                else: # Circular
+                    fig = px.pie(
+                        chart_data, names=col_agg, values='Contagem', # title=f'Top 15 - {col_agg}',
+                        color=color_arg
+                    )
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+
+                # Realça os rótulos e fontes do gráfico
+                fig.update_layout(
+                    font=dict(
+                        size=14, # Tamanho base da fonte para o gráfico
+                    ),
+                    legend_font=dict(
+                        size=14 # Tamanho da fonte da legenda
+                    ),
+                    xaxis_title_font=dict(size=16), # Tamanho da fonte do título do eixo X
+                    yaxis_title_font=dict(size=16), # Tamanho da fonte do título do eixo Y
                 )
-                st.plotly_chart(fig)
+                fig.update_traces(textfont_size=14) # Tamanho da fonte dos rótulos de dados
+
+                # Centraliza a legenda verticalmente para todos os gráficos
+                fig.update_layout(legend=dict(yanchor="middle", y=0.5))
+
+                container.plotly_chart(fig, width=True)
+
+            # --- Lógica de Layout Principal ---
+            
+            # Inicializa variáveis para evitar erros
+            chart_type, color_mode, sort_by_chart, sort_order_chart = (None,) * 4
+            
+            # Renderização do cabeçalho é condicional à view_mode
+            # Primeiro, precisamos saber qual é o view_mode
+            temp_view_mode_key = f"view_mode_{col_agg}"
+            view_mode_selection = st.session_state.get(temp_view_mode_key, "Gráfico") # Pega valor atual ou default
+
+            if view_mode_selection == "Ambos":
+                # Layout de cabeçalho com duas colunas
+                header_col1, header_col2 = st.columns([0.3, 0.7], vertical_alignment='center', gap="small")
+                with header_col1:
+                    view_mode = st.radio("Exibição", ["Gráfico", "Tabela", "Ambos"], key=temp_view_mode_key, horizontal=True) # label_visibility="collapsed"
+                with header_col2:
+                    chart_type, color_mode, sort_by_chart, sort_order_chart = _render_chart_controls(st)
+            else:
+                # Layout de cabeçalho com uma coluna
+                view_mode = st.radio("Exibição", ["Gráfico", "Tabela", "Ambos"], key=temp_view_mode_key, horizontal=True)
+            
+            st.divider()
+
+            # Lógica de renderização do conteúdo
+            if view_mode == "Tabela":
+                render_table(st)
+
+            elif view_mode == "Gráfico":
+                # Controles são renderizados ANTES do gráfico no mesmo container
+                chart_type, color_mode, sort_by_chart, sort_order_chart = _render_chart_controls(st)
+                render_chart(st, chart_type, color_mode, sort_by_chart, sort_order_chart)
+
+            elif view_mode == "Ambos":
+                # Controles já foram renderizados no cabeçalho
+                col_table, col_chart = st.columns([0.5, 0.5], vertical_alignment='center')
+                render_table(col_table)
+                render_chart(col_chart, chart_type, color_mode, sort_by_chart, sort_order_chart)
+
 

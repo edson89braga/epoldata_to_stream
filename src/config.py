@@ -7,6 +7,20 @@ PATH_DF_TRATADO_PARQUET: str = r"C:\\Users\\edson.eab\\Downloads\\Casos_SRSP_16-
 KEY_COLUMN_PRINCIPAL: str = 'Caso Id'
 N_LINHAS_VISIVEIS: int = 100
 
+TITULO = "Dashboard de Análise de Casos"
+
+INFO_HEADER = "Bem-vindo ao Dashboard de Análise de Casos"
+INFO_MD = """
+    Este painel interativo foi projetado para explorar e analisar os dados referentes a <u>Casos em tramitação no sistema ePol vinculados ao estado de SP</u>.
+    
+    Data de corte: **16/09/2025**
+
+    Utilize os filtros na barra lateral para segmentar os dados de acordo com seu interesse.
+    - **Tabela Geral**: Visualize os dados brutos filtrados e faça o download em formato Excel.
+    - **Agregações**: Explore distribuições e contagens por diferentes categorias.
+
+    """
+
 # --- Data Cleaning ---
 NULLS_PLACEHOLDERS_TO_DROP: List[str] = ['-', '', 'None', '<NA>', 'nan', 'nat', 'undefined']
 
