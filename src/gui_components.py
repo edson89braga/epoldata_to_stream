@@ -1,5 +1,5 @@
 # src/gui_components.py
-import io
+import io, ast
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -100,7 +100,7 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     # Filtros principais
     with st.sidebar.expander("Filtros Principais", expanded=True):
         for col in all_columns:
-            if col in config.JSON_FILTROS_SECUNDARIOS:
+            if col in config.LIST_FILTROS_SECUNDARIOS:
                 continue
             
             options = sorted(df[col].dropna().unique())
@@ -115,7 +115,7 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
     # Filtros secundários em um expander
     with st.sidebar.expander("Filtros Secundários", expanded=False):
-        for col in config.JSON_FILTROS_SECUNDARIOS:
+        for col in config.LIST_FILTROS_SECUNDARIOS:
             if col in df.columns:
                 options = sorted(df[col].dropna().unique())
                 selected = st.multiselect(
@@ -197,8 +197,39 @@ def prepare_agg_data(_df: pd.DataFrame, _col_agg: str) -> pd.DataFrame:
     Prepara e agrega os dados para uma coluna específica.
     """
     df_agg = _df.copy()
-    df_agg[_col_agg] = df_agg[_col_agg].fillna("Não Informado")
-    df_agg = df_agg[~df_agg[_col_agg].isin(config.NULLS_PLACEHOLDERS_TO_DROP)]
+
+    # --- Lógica Especial para Colunas com Listas (Explode) ---
+    if _col_agg in config.LIST_COLS_TO_EXPLODE:
+        series_to_analyze = df_agg[_col_agg]
+
+        # 1. Converte strings que parecem listas (ex: "['a', 'b']") em objetos de lista
+        is_stringified_list = series_to_analyze.dropna().apply(
+            lambda x: isinstance(x, str) and x.startswith('[') and x.endswith(']')
+        ).any()
+
+        if is_stringified_list:
+            # Usa ast.literal_eval que é seguro para esta conversão
+            series_to_analyze = series_to_analyze.apply(
+                lambda x: ast.literal_eval(x) if (isinstance(x, str) and x.startswith('[')) else x
+            )
+            df_agg[_col_agg] = series_to_analyze
+
+        # 2. Se a coluna contém listas, "explode" o DataFrame
+        is_exploded_list = series_to_analyze.dropna().apply(isinstance, args=(list,)).any()
+        if is_exploded_list:
+            df_agg = df_agg.explode(_col_agg)
+        
+        if is_stringified_list and is_exploded_list:
+            st.info(f"Convertendo strings de listas para análise e expandindo para contar cada item individualmente.")
+        elif is_stringified_list and not is_exploded_list:
+            st.info(f"Convertendo strings de listas para análise.")
+        elif is_exploded_list:
+            st.info(f"Expandindo listas para contar cada item individualmente.")
+
+    # df_agg = df_agg[~df_agg[_col_agg].isin(config.NULLS_PLACEHOLDERS_TO_DROP)]
+
+    # Unifica todos os valores nulos e placeholders (ex: '-', '', <NA>) sob a mesma categoria
+    df_agg[_col_agg] = df_agg[_col_agg].replace(config.NULLS_PLACEHOLDERS_TO_DROP, "Sem Registro").fillna("Sem Registro")
     
     agg_data = df_agg.groupby(_col_agg)[config.KEY_COLUMN_PRINCIPAL].nunique().reset_index()
     agg_data.columns = [_col_agg, 'Contagem']
@@ -266,6 +297,38 @@ def display_aggregations_tab(df: pd.DataFrame):
                     }
                 )
 
+            def _create_bar_chart(data, col_agg, color_mode):
+                if color_mode == "Monocromático":
+                    fig = go.Figure()
+                    # Define a ordem de exibição das barras (crescente)
+                    ascending_category_order = data[col_agg].tolist()
+
+                    # Itera em ordem reversa (decrescente) para popular a legenda corretamente
+                    for index, row in data.iloc[::-1].iterrows():
+                        fig.add_trace(go.Bar(
+                            x=[row[col_agg]],
+                            y=[row['Contagem']],
+                            name=str(row[col_agg]),
+                            text=f"{row['Contagem']}",
+                            textposition='auto',
+                            marker_color='rgb(31, 119, 180)'
+                        ))
+                    
+                    fig.update_layout(legend=dict(yanchor="middle", y=0.5, traceorder="reversed"))
+
+                    # Força a ordem de exibição no eixo X
+                    fig.update_xaxes(categoryorder='array', categoryarray=ascending_category_order)
+                    # fig.update_layout(barmode='stack', showlegend=True)
+
+                else: # Multicolorido
+                    fig = px.bar(data, x=col_agg, y='Contagem', color=col_agg, text_auto=True)
+                return fig
+
+            def _create_pie_chart(data, col_agg, color_arg):
+                fig = px.pie(data, names=col_agg, values='Contagem', color=color_arg)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                return fig
+
             def render_chart(container, chart_type, color_mode, sort_by_chart, sort_order_chart):
                 
                 # A ordenação para pegar o Top 15 e a ordenação para exibição são feitas aqui
@@ -277,32 +340,14 @@ def display_aggregations_tab(df: pd.DataFrame):
                 color_arg = col_agg if color_mode == "Multicolor" else None
 
                 if chart_type == "Colunas":
-                    if color_mode == "Monocromático":
-                        # Usa graph_objects para criar uma legenda por barra
-                        fig = go.Figure()
-                        for index, row in chart_data.iterrows():
-                            fig.add_trace(go.Bar(
-                                x=[row[col_agg]],
-                                y=[row['Contagem']],
-                                name=str(row[col_agg]),
-                                text=row['Contagem'],
-                                textposition='auto',
-                                marker_color='rgb(31, 119, 180)' # Cor azul padrão do Plotly
-                            ))
-                        fig.update_layout(barmode='stack', showlegend=True)
-                    
-                    else: # Multicolorido
-                        fig = px.bar(chart_data, x=col_agg, y='Contagem', text_auto=True, color=col_agg)
+                    fig = _create_bar_chart(chart_data, col_agg, color_mode)
 
                 else: # Circular
-                    fig = px.pie(
-                        chart_data, names=col_agg, values='Contagem', # title=f'Top 15 - {col_agg}',
-                        color=color_arg
-                    )
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    fig = _create_pie_chart(chart_data, col_agg, color_arg)
 
                 # Realça os rótulos e fontes do gráfico
                 fig.update_layout(
+                    legend_title_text=None, # Remove o título da legenda
                     font=dict(
                         size=14, # Tamanho base da fonte para o gráfico
                     ),
@@ -314,10 +359,10 @@ def display_aggregations_tab(df: pd.DataFrame):
                 )
                 fig.update_traces(textfont_size=14) # Tamanho da fonte dos rótulos de dados
 
-                # Centraliza a legenda verticalmente para todos os gráficos
+                # Centraliza a legenda
                 fig.update_layout(legend=dict(yanchor="middle", y=0.5))
 
-                container.plotly_chart(fig, width=True)
+                container.plotly_chart(fig, width=True, key=f"chart_{col_agg}")
 
             # --- Lógica de Layout Principal ---
             

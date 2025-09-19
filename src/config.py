@@ -35,7 +35,7 @@ JSON_FILTROS_DEFAULT: Dict[str, Union[str, List[str]]] = {
     'Lotação Sigla': 'SR/PF/SP',
 }
 
-JSON_FILTROS_SECUNDARIOS: List[str] = [
+LIST_FILTROS_SECUNDARIOS: List[str] = [
     'Caso Id', 'Número do Processo',
     'Data Fato', 
     'Data Recebimento', 
@@ -58,4 +58,8 @@ LIST_AGREGATION_VIEWS: Set[str] = [
     'Área de Atribuição', 
     'Tipo Penal', 
     'Matéria Prometheus', 
+]
+
+LIST_COLS_TO_EXPLODE = [
+    'Tipo Penal'
 ]
