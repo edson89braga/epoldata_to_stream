@@ -16,7 +16,8 @@ def main():
     state_manager.initialize_state()
 
     # Carrega os dados usando o módulo de data loader
-    df_tratado = data_loader.load_data()
+    with st.spinner('Carregando dados...'):
+        df_tratado = data_loader.load_data()
 
     if df_tratado.empty:
         st.warning("Não foi possível carregar os dados. Verifique o caminho do arquivo.")

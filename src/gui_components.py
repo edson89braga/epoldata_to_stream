@@ -13,7 +13,7 @@ def load_custom_css():
         <style>
             /* Define a largura inicial da barra lateral */
             [data-testid="stSidebar"][aria-collapsed="false"] {
-                min-width: 300px; /* !important é necessário para sobrescrever o estilo padrão */
+                min-width: 300px !important; /* é necessário para sobrescrever o estilo padrão */
             }
 
             /* Ajusta a posição vertical das abas */
@@ -56,6 +56,22 @@ def create_header(df: pd.DataFrame):
         
         st.divider()
 
+def display_active_filters():
+    """Exibe um resumo dos filtros que foram aplicados na barra lateral."""
+    active_filters = []
+    for key, value in st.session_state.items():
+        if key.startswith("filter_") and value:
+            col_name = key.replace("filter_", "")
+            # Formata o valor para exibição
+            value_str = ", ".join(map(str, value))
+            active_filters.append(f"**{col_name}:** `{value_str}`")
+
+    if active_filters:
+        with st.expander("Filtros Ativos", expanded=True):
+            st.markdown(" &nbsp; | &nbsp; ".join(active_filters))
+    else:
+        st.info("Nenhum filtro aplicado. Exibindo todos os registros.")
+
 def display_home_tab():
     """Exibe o conteúdo da aba 'Início'."""
     st.header(config.INFO_HEADER)
@@ -75,7 +91,7 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     e as colunas selecionadas para exibição.
     """
     # st.sidebar.header("Filtros")
-    
+
     df_filtered = df.copy()
     
     # Filtro para selecionar colunas
@@ -86,16 +102,13 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         for col in all_columns:
             if col in config.JSON_FILTROS_SECUNDARIOS:
                 continue
-
-            default_value = []
-            if col in config.JSON_FILTROS_DEFAULT:
-                default_value = config.JSON_FILTROS_DEFAULT[col]
             
             options = sorted(df[col].dropna().unique())
             selected = st.multiselect(
-                f"Filtrar {col}",
+                f"{col}",
                 options=options,
-                default=default_value
+                key=f"filter_{col}", # Adiciona uma key prefixada
+                on_change=state_manager.invalidate_excel_file
             )
             if selected:
                 df_filtered = df_filtered[df_filtered[col].isin(selected)]
@@ -106,24 +119,37 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             if col in df.columns:
                 options = sorted(df[col].dropna().unique())
                 selected = st.multiselect(
-                    f"Filtrar {col}",
+                    f"{col}",
                     options=options,
-                    default=[]
+                    default=[],
+                    key=f"filter_{col}", # Adiciona uma key prefixada
+                    on_change=state_manager.invalidate_excel_file
                 )
                 if selected:
                     df_filtered = df_filtered[df_filtered[col].isin(selected)]
-    
+
+    st.sidebar.button(
+        "🧹 Limpar Todos os Filtros",
+        on_click=state_manager.clear_filters, use_container_width=True
+    )
     return df_filtered
 
 def display_general_table_tab(df: pd.DataFrame):
     """Exibe o conteúdo da aba 'Tabela Geral'."""
     st.header(f"Visualização Geral dos Dados")
-    st.metric("Total de Registros Filtrados", f"{len(df):,}".replace(",", "."))
+    col1, col2 = st.columns([0.8, 0.2], vertical_alignment="center")
+    with col1:
+        # Exibe um sumário dos filtros atualmente ativos
+        display_active_filters()
+    with col2:
+        st.metric("Total de Registros Filtrados", f"{len(df):,}".replace(",", "."))
     
     selected_columns = st.multiselect(
         "Selecione as colunas a exibir:",
         options=df.columns.tolist(),
-        default=df.columns.tolist()
+        default=df.columns.tolist(),
+        key="multiselect_columns", # Key para o reset
+        on_change=state_manager.invalidate_excel_file
     )
 
     col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
@@ -147,13 +173,23 @@ def display_general_table_tab(df: pd.DataFrame):
     
     st.dataframe(df_sorted[selected_columns].head(config.N_LINHAS_VISIVEIS))
 
-    excel_file = to_excel(df_sorted[selected_columns])
-    st.download_button(
-        label="📥 Download (xlsx)",
-        data=excel_file,
-        file_name="dados_filtrados.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # --- Lógica de Download Sob Demanda ---
+    if 'excel_file' not in st.session_state:
+        st.session_state.excel_file = None
+
+    def generate_excel():
+        st.session_state.excel_file = to_excel(df_sorted[selected_columns])
+
+    st.button("Preparar Download (xlsx)", on_click=generate_excel, use_container_width=True)
+
+    if st.session_state.excel_file is not None:
+        st.download_button(
+            label="📥 Baixar Arquivo",
+            data=st.session_state.excel_file,
+            file_name="dados_filtrados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # @st.cache_data # cache estava causando um erro de sincronismo com dataframe
 def prepare_agg_data(_df: pd.DataFrame, _col_agg: str) -> pd.DataFrame:
@@ -186,6 +222,16 @@ def display_aggregations_tab(df: pd.DataFrame):
             on_click=state_manager.toggle_expanders_state)
         
     st.info("As visualizações de agregação são baseadas nos dados atualmente filtrados. Os gráficos exibem até 15 resultados cada.")
+
+    # --- Barreira de Proteção (Guardrail) ---
+    AGGREGATION_THRESHOLD = 50000 
+    if len(df) > AGGREGATION_THRESHOLD:
+        st.warning(
+            f"Muitos registros para visualizar ({len(df):,}). "
+            f"Por favor, aplique mais filtros na barra lateral para reduzir o número de registros abaixo de {AGGREGATION_THRESHOLD:,} e habilitar as agregações."
+        )
+        return # Interrompe a execução da função aqui
+
     for col_agg in config.LIST_AGREGATION_VIEWS:
         if col_agg not in df.columns:
             st.warning(f"A coluna de agregação '{col_agg}' não foi encontrada nos dados.")
