@@ -30,8 +30,8 @@ def main():
     # gui_components.create_header(df_filtered)
 
     # Cria as abas principais da aplicação
-    tab_inicio, tab_geral, tab_agregacoes = st.tabs([
-        "📊 Início", "📋 Tabela Geral", "📈 Agregações"
+    tab_inicio, tab_geral, tab_agregacoes, tab_cruzada = st.tabs([
+        "📊 Início", "📋 Tabela Geral", "📈 Agregações", "🔗 Análise Cruzada"
     ])
 
     with tab_inicio:
@@ -44,6 +44,9 @@ def main():
     with tab_agregacoes:
         # A aba de agregações opera sobre os dados já filtrados
         gui_components.display_aggregations_tab(df_filtered)
+
+    with tab_cruzada:
+        gui_components.display_crosstab_tab(df_filtered)
 
 if __name__ == "__main__":
     main()

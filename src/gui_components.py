@@ -357,3 +357,60 @@ def display_aggregations_tab(df: pd.DataFrame):
                 render_chart(col_chart, chart_type, color_mode, sort_by_chart, sort_order_chart)
 
 
+def display_crosstab_tab(df: pd.DataFrame):
+    """
+    Exibe a aba de Análise Cruzada, permitindo a comparação entre duas
+    variáveis categóricas através de uma tabela de contingência e um mapa de calor.
+    """
+    st.header("Análise Cruzada de Variáveis")
+    st.markdown("Selecione duas variáveis categóricas para analisar a frequência e a relação entre elas.")
+
+    # Identifica colunas categóricas com baixa cardinalidade para uma boa visualização
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    low_cardinality_cols = [col for col in categorical_cols if df[col].nunique() <= 50]
+    
+    high_cardinality_cols = set(categorical_cols) - set(low_cardinality_cols)
+    if high_cardinality_cols:
+        st.info(f"As seguintes colunas foram omitidas por terem muitos valores únicos (>50): {', '.join(sorted(list(high_cardinality_cols)))}")
+
+    if len(low_cardinality_cols) < 2:
+        st.warning("Não há variáveis categóricas suficientes para realizar uma análise cruzada.")
+        return
+
+    col1_selection, col2_selection = st.columns(2)
+    with col1_selection:
+        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols, index=0)
+    
+    with col2_selection:
+        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols, index=1)
+
+    if col1 == col2:
+        st.error("Por favor, selecione duas variáveis diferentes para a análise.")
+        return
+
+    st.divider()
+
+    try:
+        # Calcula a tabela de contingência (crosstab)
+        crosstab_df = pd.crosstab(df[col1], df[col2])
+
+        # Cria o mapa de calor (heatmap) com Plotly
+        fig = px.imshow(
+            crosstab_df,
+            text_auto=True,
+            aspect="auto",
+            title=f"Mapa de Calor: Relação entre {col1} e {col2}",
+            labels=dict(x=f"<b>{col2}</b>", y=f"<b>{col1}</b>", color="Contagem"),
+            color_continuous_scale=px.colors.sequential.Blues
+        )
+        
+        fig.update_xaxes(side="top")
+        fig.update_layout(font=dict(size=14))
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("Ver Tabela de Frequência Detalhada"):
+            st.dataframe(crosstab_df, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao gerar a análise cruzada: {e}")
+
