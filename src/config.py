@@ -3,7 +3,7 @@
 from typing import Dict, List, Set, Union
 
 # --- Paths and Constants ---
-PATH_DF_TRATADO_PARQUET: str = r"C:\\Users\\edson.eab\\Downloads\\Casos_SRSP_16-09-2025_Tratado.parquet"
+PATH_DF_TRATADO_PARQUET: str = "data/Casos_SRSP_16-09-2025_Tratado.parquet"
 KEY_COLUMN_PRINCIPAL: str = 'Caso Id'
 N_LINHAS_VISIVEIS: int = 100
 
