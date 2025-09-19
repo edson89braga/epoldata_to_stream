@@ -228,7 +228,8 @@ def display_aggregations_tab(df: pd.DataFrame):
     if len(df) > AGGREGATION_THRESHOLD:
         st.warning(
             f"Muitos registros para visualizar ({len(df):,}). "
-            f"Por favor, aplique mais filtros na barra lateral para reduzir o número de registros abaixo de {AGGREGATION_THRESHOLD:,} e habilitar as agregações."
+            f"Por favor, aplique mais filtros na barra lateral para reduzir o número de registros abaixo de {AGGREGATION_THRESHOLD:,}"
+             " e habilitar as agregações."
         )
         return # Interrompe a execução da função aqui
 
@@ -379,20 +380,44 @@ def display_crosstab_tab(df: pd.DataFrame):
 
     col1_selection, col2_selection = st.columns(2)
     with col1_selection:
-        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols, index=0)
+        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols) # index=0
     
     with col2_selection:
-        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols, index=1)
+        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols) # index=1
 
     if col1 == col2:
         st.error("Por favor, selecione duas variáveis diferentes para a análise.")
         return
 
+    st.subheader("Filtros Adicionais")
+    st.markdown("Refine os dados incluídos na análise selecionando os valores de cada variável.")
+    
+    filt_col1, filt_col2 = st.columns(2)
+    with filt_col1:
+        # Filtro para os valores da primeira variável
+        unique_vals1 = sorted(df[col1].dropna().unique())
+        selected_vals1 = st.multiselect(
+            f"Valores a incluir de **{col1}**:",
+            options=unique_vals1,
+            default=unique_vals1
+        )
+
+    with filt_col2:
+        # Filtro para os valores da segunda variável
+        unique_vals2 = sorted(df[col2].dropna().unique())
+        selected_vals2 = st.multiselect(
+            f"Valores a incluir de **{col2}**:",
+            options=unique_vals2,
+            default=unique_vals2
+        )
+
+    df_crosstab = df[df[col1].isin(selected_vals1) & df[col2].isin(selected_vals2)]
+
     st.divider()
 
     try:
         # Calcula a tabela de contingência (crosstab)
-        crosstab_df = pd.crosstab(df[col1], df[col2])
+        crosstab_df = pd.crosstab(df_crosstab[col1], df_crosstab[col2])
 
         # Cria o mapa de calor (heatmap) com Plotly
         fig = px.imshow(
@@ -413,4 +438,107 @@ def display_crosstab_tab(df: pd.DataFrame):
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao gerar a análise cruzada: {e}")
+
+
+def display_timeseries_tab(df: pd.DataFrame):
+    """
+    Exibe a aba de Análise de Série Temporal, permitindo visualizar a
+    contagem de casos ao longo do tempo com base em uma coluna de data.
+    """
+    st.header("Análise de Série Temporal")
+    st.markdown("Analise a distribuição de casos ao longo do tempo com base em diferentes granularidades.")
+
+    # Identifica colunas de data/datetime no DataFrame
+    date_cols = df.select_dtypes(include=['datetime64[ns]', 'datetime']).columns.tolist()
+
+    # --- Filtra colunas de segmentação por cardinalidade ---
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    CARDINALITY_LIMIT = 30 # Mesmo limite da Análise Cruzada para consistência
+    
+    low_cardinality_cols = [col for col in categorical_cols if df[col].nunique() <= CARDINALITY_LIMIT]
+    high_cardinality_cols = set(categorical_cols) - set(low_cardinality_cols)
+    
+    segmentation_options = ["Nenhum (Total Geral)"] + sorted(low_cardinality_cols)
+
+    if not date_cols:
+        st.warning("Nenhuma coluna de data foi encontrada nos dados para realizar a análise temporal.")
+        return
+
+    # Identifica colunas categóricas para segmentação
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    segmentation_options = ["Nenhum (Total Geral)"] + sorted(categorical_cols)
+
+    col1_selection, col2_selection, col3_selection = st.columns(3)
+
+    with col1_selection:
+        date_col = st.selectbox("Selecione a coluna de data para análise:", date_cols)
+    
+    with col2_selection:
+        granularity = st.selectbox(
+            "Selecione a granularidade do tempo:",
+            ['Ano', 'Trimestre', 'Mês', 'Semana', 'Dia']
+        )
+
+    with col3_selection:
+        segment_col = st.selectbox("Segmentar por (opcional):", segmentation_options, 
+                                   help=f"Apenas colunas com até {CARDINALITY_LIMIT} valores únicos são exibidas.")
+
+    st.divider()
+
+    try:
+        granularity_map = {
+            'Ano': 'Y', 'Trimestre': 'Q', 'Mês': 'M', 'Semana': 'W', 'Dia': 'D'
+        }
+        resample_code = granularity_map[granularity]
+
+        # --- Prepara o DataFrame dinamicamente com as colunas necessárias ---
+        cols_to_keep = [date_col, config.KEY_COLUMN_PRINCIPAL]
+        if segment_col != "Nenhum (Total Geral)":
+            cols_to_keep.append(segment_col)
+        
+        # Garante que a lista de colunas seja única para evitar erros
+        unique_cols = list(set(cols_to_keep))
+        df_time = df[unique_cols].copy()
+        df_time = df_time.dropna(subset=cols_to_keep) # Remove linhas sem data ou segmento
+
+        if df_time.empty:
+            st.info("Não há dados válidos na coluna de data selecionada para o período filtrado.")
+            return
+
+        if segment_col == "Nenhum (Total Geral)":
+            # Usa .agg() para uma saída consistente
+            time_series_data = df_time.groupby(pd.Grouper(key=date_col, freq=resample_code)).agg(
+                Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
+            ).reset_index().rename(columns={date_col: 'Período'})
+            y_col = 'Contagem_de_Casos'
+            color_arg = None
+            title = f"Evolução de Casos por {granularity} ({date_col})"
+        else:
+            # Usa .agg() para uma saída consistente
+            time_series_data = df_time.groupby([pd.Grouper(key=date_col, freq=resample_code), segment_col]).agg(
+                Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
+            ).reset_index().rename(columns={date_col: 'Período'})
+            y_col = 'Contagem_de_Casos'
+            color_arg = segment_col
+            title = f"Evolução de Casos por {granularity} ({date_col}), segmentado por {segment_col}"
+
+        # Cria o gráfico de linha com Plotly
+        fig = px.line(
+            time_series_data,
+            x='Período',
+            y=y_col,
+            color=color_arg,
+            title=title,
+            markers=True,
+            labels={'Período': f'Período ({granularity})', y_col: 'Número de Casos Únicos'}
+        )
+        
+        fig.update_layout(font=dict(size=14))
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("Ver Dados da Série Temporal Detalhadamente"):
+            st.dataframe(time_series_data, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao gerar a análise de série temporal: {e}")
 

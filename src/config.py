@@ -11,9 +11,13 @@ TITULO = "Dashboard de Análise de Casos"
 
 INFO_HEADER = "Bem-vindo ao Dashboard de Análise de Casos"
 INFO_MD = """
-    Este painel interativo foi projetado para explorar e analisar os dados referentes a <u>Casos em tramitação no sistema ePol vinculados ao estado de SP</u>.
+    Este painel interativo foi projetado para explorar e analisar os dados de casos.
     
-    Data de corte: **16/09/2025**
+    **Filtros de corte na base ePol-BI:**
+    - UF: SP
+    - Unidade: SR/PF/SP
+    - Sistema de tramitação: ePol
+    - Data de extração: **16/09/2025**
 
     Utilize os filtros na barra lateral para segmentar os dados de acordo com seu interesse.
     - **Tabela Geral**: Visualize os dados brutos filtrados e faça o download em formato Excel.
