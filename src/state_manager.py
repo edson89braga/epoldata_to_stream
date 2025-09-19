@@ -15,7 +15,7 @@ def initialize_state():
         if key not in st.session_state:
             # Garante que o valor seja sempre uma lista para o multiselect
             st.session_state[key] = [default_value] if isinstance(default_value, str) else default_value
-
+    
 def toggle_expanders_state():
     """Inverte o estado booleano de 'expanders_state'."""
     st.session_state.expanders_state = not st.session_state.expanders_state
@@ -24,16 +24,20 @@ def invalidate_excel_file():
     """Define o arquivo Excel no estado da sessão como None."""
     st.session_state.excel_file = None
 
-def clear_filters():
+def clear_filters(all_columns: list = None):
     """Limpa todos os filtros da barra lateral, resetando os widgets."""
     # Filtros são identificados por um prefixo para segurança
     filter_keys = [k for k in st.session_state.keys() if k.startswith("filter_")]
     for key in filter_keys:
         st.session_state[key] = [] # Para multiselect, resetar para lista vazia
     
-    # Limpa o filtro de colunas também
+    # Reseta o filtro de colunas para 'all' se a lista for fornecida
     if "multiselect_columns" in st.session_state:
-        del st.session_state["multiselect_columns"]
+        if all_columns is not None:
+            st.session_state["multiselect_columns"] = all_columns
+        else:
+            del st.session_state["multiselect_columns"]
+
     invalidate_excel_file()
 
 

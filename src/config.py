@@ -56,7 +56,7 @@ LIST_AGREGATION_VIEWS: Set[str] = [
     'Origem Documento', 
     'Órgão/Vítima', 
     'Área de Atribuição', 
-    'Tipo Penal', 
+    'Tipo Penal ', 
     'Matéria Prometheus', 
 ]
 

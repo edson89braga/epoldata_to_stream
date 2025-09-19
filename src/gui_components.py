@@ -130,18 +130,19 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
     st.sidebar.button(
         "🧹 Limpar Todos os Filtros",
-        on_click=state_manager.clear_filters, use_container_width=True
+        on_click=state_manager.clear_filters, use_container_width=True,
+        args=(df.columns.tolist(),), # Passa a lista de colunas para a função de reset
     )
     return df_filtered
 
 def display_general_table_tab(df: pd.DataFrame):
     """Exibe o conteúdo da aba 'Tabela Geral'."""
     st.header(f"Visualização Geral dos Dados")
-    col1, col2 = st.columns([0.8, 0.2], vertical_alignment="center")
-    with col1:
+    col1_i, col2_i = st.columns([0.8, 0.2], vertical_alignment="center")
+    with col1_i:
         # Exibe um sumário dos filtros atualmente ativos
         display_active_filters()
-    with col2:
+    with col2_i:
         st.metric("Total de Registros Filtrados", f"{len(df):,}".replace(",", "."))
     
     selected_columns = st.multiselect(
@@ -152,11 +153,11 @@ def display_general_table_tab(df: pd.DataFrame):
         on_change=state_manager.invalidate_excel_file
     )
 
-    col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+    col1, col2 = st.columns(2) # [0.4, 0.3, 0.3])
     with col1:
         sort_col = st.selectbox(
             "Ordenar por:",
-            options=df.columns,
+            options=selected_columns if selected_columns else df.columns.tolist(),
             index=list(df.columns).index(config.KEY_COLUMN_PRINCIPAL) if config.KEY_COLUMN_PRINCIPAL in df.columns else 0
         )
     with col2:
