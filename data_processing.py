@@ -392,35 +392,41 @@ def convert_spreadsheet_to_parquet(
 
 @timer_decorator
 def aggregate_column_to_list(
-    df: pd.DataFrame, key_column: str, column_to_aggregate: str
+    df: pd.DataFrame, key_column: str, columns_to_aggregate: List[str]
 ) -> pd.DataFrame:
     """
     Agrupa um DataFrame por uma coluna chave e agrega os valores de outra
-    coluna em uma lista, tornando a chave única.
+    colunas em listas, tornando a chave única.
 
     Para as demais colunas, o primeiro valor encontrado para cada chave é mantido.
 
     Args:
         df (pd.DataFrame): DataFrame de entrada.
         key_column (str): Coluna para agrupar (ex: 'Proc. Identificação').
-        column_to_aggregate (str): Coluna cujos valores serão agregados em uma lista
-                                   (ex: 'Proc. Tipo Penal').
+        columns_to_aggregate (List[str]): Colunas cujos valores serão agregados em listas
+                                          (ex: ['Proc. Tipo Penal', 'Outra Coluna']).
 
     Returns:
         pd.DataFrame: DataFrame com a `key_column` única.
     """
-    if key_column not in df.columns or column_to_aggregate not in df.columns:
-        raise ValueError("A coluna chave ou a coluna de agregação não existem no DataFrame.")
+    # Validação das colunas
+    all_cols_to_check = [key_column] + columns_to_aggregate
+    for col in all_cols_to_check:
+        if col not in df.columns:
+            raise ValueError(f"A coluna '{col}' não existe no DataFrame.")
 
     # Define as regras de agregação
     agg_rules = {
-        col: "first" for col in df.columns if col not in [key_column, column_to_aggregate]
+        col: "first" for col in df.columns if col not in all_cols_to_check
     }
-    agg_rules[column_to_aggregate] = list
+
+    # Adiciona a regra de agregação para cada coluna na lista
+    for col_agg in columns_to_aggregate:
+        agg_rules[col_agg] = list
 
     df_aggregated = df.groupby(key_column).agg(agg_rules).reset_index()
 
-    print(f"\nDataframe com colunas agregadas:\n Shape anteior: {df.shape}\n Shape após: {df_aggregated.shape}\n")
+    print(f"\nDataframe com colunas agregadas:\n Shape anterior: {df.shape}\n Shape após: {df_aggregated.shape}\n")
     return df_aggregated
 
 @timer_decorator
@@ -554,6 +560,7 @@ colunas_uteis = [
     "Proc. Lei", 
     "Proc. Lei Artigo", 
     "Proc. Lei Artigo Isolado", 
+    "Lei-Artigo",
     "Proc. Tipo Penal", 
     "Proc. Incidência Penal Principal", 
     
@@ -588,6 +595,10 @@ type_mapping = {
     'Proc. Área de Atribuição':         'string' ,
     'Matéria Registro Especial':        'string' ,
     'Proc. Tratamento Especial':        'string' ,
+    "Proc. Lei":                        'string' ,
+    "Proc. Lei Artigo":                 'string' ,
+    "Proc. Lei Artigo Isolado":         'string' ,
+    "Lei-Artigo":                       'string' ,
     'Proc. Tipo Penal':                 'string' ,
     'Proc. Incidência Penal Principal': 'string' ,    
 }
@@ -603,12 +614,13 @@ rename_cols_mapping = {
     "Proc. Origem Documento"           : "Órgão de Origem",          
     "Proc. Área de Atribuição"         : "Área de Atribuição",        
     "Proc. Tratamento Especial"        : "Matéria Prometheus",      
+    "Proc. Lei Artigo"                 : "Proc. Artigo",
     "Proc. Tipo Penal"                 : "Tipo Penal",                
     "Proc. Incidência Penal Principal" : "Incidência Penal Principal",
     "Proc. Órgão Vítima"               : "Órgão Vítima",              
 }
 
-file_name = "Casos_SP_XX-09-2025"
+file_name = "Casos_SP_22-09-2025"
 
 @timer_decorator
 def pipeline_tratatamento_dados():
@@ -616,18 +628,31 @@ def pipeline_tratatamento_dados():
     xlsx_principal = rf"C:\\Users\\edson.eab\\Downloads\\{file_name}.xlsx"
     xlsx_complementar = rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar.xlsx"
 
-    path_parquet_df_principal = convert_spreadsheet_to_parquet(xlsx_principal)
-    path_parquet_df_complementar = convert_spreadsheet_to_parquet(xlsx_complementar)
-
+    path_parquet_df_principal = convert_spreadsheet_to_parquet(xlsx_principal) # rf"C:\\Users\\edson.eab\\Downloads\\{file_name}.parquet"
+    path_parquet_df_complementar = convert_spreadsheet_to_parquet(xlsx_complementar) # rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar.parquet"
     # O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'
     df_principal  = pd.read_parquet(path_parquet_df_principal)
     assert 'Proc. Identificação' in df_principal.columns and df_principal['Proc. Identificação'].nunique() == df_principal.shape[0], "O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'"
 
     # O df_complementar possui 'Proc. Identificação' duplicados em razão da coluna 'Proc. Tipo Penal' constar explodida
     df_complementar = pd.read_parquet(path_parquet_df_complementar)
-    assert confirm_cols_exploded(df_complementar, 'Proc. Identificação') == ['Proc. Tipo Penal']
 
-    df_complementar_tratado = aggregate_column_to_list(df=df_complementar, key_column='Proc. Identificação', column_to_aggregate='Proc. Tipo Penal')
+    # Filtrar df_complementar para que só permaneçam linhas com 'Proc. Identificação' que também constam em df_principal
+    df_complementar = df_complementar[df_complementar['Proc. Identificação'].isin(df_principal['Proc. Identificação'])]
+
+    assert confirm_cols_exploded(df_complementar, 'Proc. Identificação') == ['Proc. Tipo Penal', 'Proc. Lei', 'Proc. Lei Artigo']
+
+    # Concatenar as colunas 'Proc. Lei' e 'Proc. Lei Artigo' numa nova coluna 'Lei-Artigo' separados por ' - '
+    df_complementar['Lei-Artigo'] = df_complementar[['Proc. Lei', 'Proc. Lei Artigo']].apply(lambda x: ' - '.join(x.astype(str)), axis=1)
+
+    n_procs_anterior = df_complementar['Proc. Identificação'].unique().shape[0]
+
+    df_complementar_tratado = aggregate_column_to_list(df=df_complementar, 
+                                                       key_column='Proc. Identificação', 
+                                                       columns_to_aggregate=['Proc. Tipo Penal', 'Proc. Lei', 'Proc. Lei Artigo', 'Proc. Lei Artigo Isolado', 'Lei-Artigo'])
+    assert df_complementar_tratado.shape[0] == n_procs_anterior
+    
+    # df_complementar_tratado.to_parquet(rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar_Tratado.parquet")
 
     df_completo = merge_dataframes(df_principal, df_complementar_tratado, key_column='Proc. Identificação', how='left')
 

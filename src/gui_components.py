@@ -426,41 +426,41 @@ def display_crosstab_tab(df: pd.DataFrame):
 
     col1_selection, col2_selection = st.columns(2)
     with col1_selection:
-        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols) # index=0
+        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[0]) # index=0
     
     with col2_selection:
-        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols) # index=1
+        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[1]) # index=1
 
     if col1 == col2:
         st.error("Por favor, selecione duas variáveis diferentes para a análise.")
         return
 
-    st.subheader("Filtros Adicionais")
-    st.markdown("Refine os dados incluídos na análise selecionando os valores de cada variável.")
+    with st.expander("Filtros Adicionais"):
+        # st.subheader("Filtros Adicionais")
+        st.markdown("Refine os dados incluídos na análise selecionando os valores de cada variável.")
     
-    filt_col1, filt_col2 = st.columns(2)
-    with filt_col1:
-        # Filtro para os valores da primeira variável
-        unique_vals1 = sorted(df[col1].dropna().unique())
-        selected_vals1 = st.multiselect(
-            f"Valores a incluir de **{col1}**:",
-            options=unique_vals1,
-            default=unique_vals1
-        )
+        filt_col1, filt_col2 = st.columns(2)
+        with filt_col1:
+            # Filtro para os valores da primeira variável
+            unique_vals1 = sorted(df[col1].dropna().unique())
+            selected_vals1 = st.multiselect(
+                f"Valores a incluir de **{col1}**:",
+                options=unique_vals1,
+                default=unique_vals1
+            )
 
-    with filt_col2:
-        # Filtro para os valores da segunda variável
-        unique_vals2 = sorted(df[col2].dropna().unique())
-        selected_vals2 = st.multiselect(
-            f"Valores a incluir de **{col2}**:",
-            options=unique_vals2,
-            default=unique_vals2
-        )
-
-    df_crosstab = df[df[col1].isin(selected_vals1) & df[col2].isin(selected_vals2)]
+        with filt_col2:
+            # Filtro para os valores da segunda variável
+            unique_vals2 = sorted(df[col2].dropna().unique())
+            selected_vals2 = st.multiselect(
+                f"Valores a incluir de **{col2}**:",
+                options=unique_vals2,
+                default=unique_vals2
+            )
 
     st.divider()
 
+    df_crosstab = df[df[col1].isin(selected_vals1) & df[col2].isin(selected_vals2)]
     try:
         # Calcula a tabela de contingência (crosstab)
         crosstab_df = pd.crosstab(df_crosstab[col1], df_crosstab[col2])
@@ -470,7 +470,7 @@ def display_crosstab_tab(df: pd.DataFrame):
             crosstab_df,
             text_auto=True,
             aspect="auto",
-            title=f"Mapa de Calor: Relação entre {col1} e {col2}",
+            # title=f"Mapa de Calor: Relação entre {col1} e {col2}",
             labels=dict(x=f"<b>{col2}</b>", y=f"<b>{col1}</b>", color="Contagem"),
             color_continuous_scale=px.colors.sequential.Blues
         )
@@ -517,7 +517,7 @@ def display_timeseries_tab(df: pd.DataFrame):
     col1_selection, col2_selection, col3_selection = st.columns(3)
 
     with col1_selection:
-        date_col = st.selectbox("Selecione a coluna de data para análise:", date_cols)
+        date_col = st.selectbox("Selecione a coluna de data para análise:", date_cols, index=config.DEFAULT_INDEX_DATA_ANALISE_TEMPORAL)
     
     with col2_selection:
         granularity = st.selectbox(

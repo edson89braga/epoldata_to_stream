@@ -3,7 +3,7 @@
 from typing import Dict, List, Set, Union
 
 # --- Paths and Constants ---
-PATH_DF_TRATADO_PARQUET: str = "data/Casos_SRSP_16-09-2025_Tratado.parquet"
+PATH_DF_TRATADO_PARQUET: str = "data/Casos_SP_22-09-2025_Tratado.parquet"
 KEY_COLUMN_PRINCIPAL: str = 'Caso Id'
 N_LINHAS_VISIVEIS: int = 100
 
@@ -15,9 +15,8 @@ INFO_MD = """
     
     **Filtros de corte na base ePol-BI:**
     - UF: SP
-    - Unidade: SR/PF/SP
     - Sistema de tramitação: ePol
-    - Data de extração: **16/09/2025**
+    - Data de extração: **22/09/2025**
 
     Utilize os filtros na barra lateral para segmentar os dados de acordo com seu interesse.
     - **Tabela Geral**: Visualize os dados brutos filtrados e faça o download em formato Excel.
@@ -56,10 +55,15 @@ LIST_AGREGATION_VIEWS: Set[str] = [
     'Origem Documento', 
     'Órgão/Vítima', 
     'Área de Atribuição', 
-    'Tipo Penal ', 
+    'Proc. Lei',
+    'Lei-Artigo',
+    'Tipo Penal', 
     'Matéria Prometheus', 
 ]
 
 LIST_COLS_TO_EXPLODE = [
-    'Tipo Penal'
+    'Tipo Penal', 'Lei-Artigo', 'Proc. Lei'
 ]
+
+DEFAULT_INDEX_ANALISE_CRUZADA = (0, 6) # Tipo e Delegacia
+DEFAULT_INDEX_DATA_ANALISE_TEMPORAL = 5 # Data Instauração
