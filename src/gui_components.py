@@ -265,13 +265,17 @@ def display_aggregations_tab(df: pd.DataFrame):
         )
         return # Interrompe a execução da função aqui
 
-    for col_agg in config.LIST_AGREGATION_VIEWS:
+    # Renderiza tanto as agregações padrão quanto as extras
+    all_cols_to_render = config.LIST_AGREGATION_VIEWS + st.session_state.extra_aggregation_cols
+    
+    for col_agg in all_cols_to_render:
         if col_agg not in df.columns:
             st.warning(f"A coluna de agregação '{col_agg}' não foi encontrada nos dados.")
             continue
         
         category_label = col_agg.upper()
-        with st.expander(f"Análise por: {category_label}", expanded=st.session_state.expanders_state):
+        container = st.expander(f"Análise por: {category_label}", expanded=st.session_state.expanders_state)
+        with container:
             
             agg_data = prepare_agg_data(df, col_agg)
 
@@ -403,6 +407,30 @@ def display_aggregations_tab(df: pd.DataFrame):
                 render_table(col_table)
                 render_chart(col_chart, chart_type, color_mode, sort_by_chart, sort_order_chart)
 
+            # Adiciona botão de remover para análises extras
+            if col_agg in st.session_state.extra_aggregation_cols:
+                st.button(
+                    "❌ Remover Análise", 
+                    key=f"remove_agg_{col_agg}",
+                    on_click=state_manager.remove_extra_analysis,
+                    args=('aggregation', col_agg),
+                    use_container_width=True
+                )
+
+    st.divider()
+    # --- UI para Adicionar Nova Agregação ---
+    st.subheader("Adicionar Nova Análise de Agregação")
+    available_cols = [col for col in df.select_dtypes(include=['object', 'category']).columns if col not in all_cols_to_render + [config.KEY_COLUMN_PRINCIPAL]]
+    
+    add_col1, add_col2 = st.columns([0.8, 0.2], vertical_alignment="bottom")
+    new_col_to_add = add_col1.selectbox("Selecione uma nova coluna para analisar:", available_cols, key="new_agg_col_select")
+    add_col2.button(
+        "➕ Adicionar", 
+        key="add_agg_button",
+        on_click=state_manager.add_extra_analysis,
+        args=('aggregation', {'col': new_col_to_add}),
+        use_container_width=True
+    )
 
 def display_crosstab_tab(df: pd.DataFrame):
     """
@@ -424,67 +452,94 @@ def display_crosstab_tab(df: pd.DataFrame):
         st.warning("Não há variáveis categóricas suficientes para realizar uma análise cruzada.")
         return
 
-    col1_selection, col2_selection = st.columns(2)
-    with col1_selection:
-        col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[0]) # index=0
-    
-    with col2_selection:
-        col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[1]) # index=1
+    def render_crosstab_instance(instance_id=None):
+        key_suffix = f"_{instance_id}" if instance_id else "_main"
+        
+        col1_selection, col2_selection = st.columns(2)
+        with col1_selection:
+            col1 = st.selectbox("Selecione a variável para as Linhas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[0], key=f"crosstab_col1{key_suffix}")
+        with col2_selection:
+            col2 = st.selectbox("Selecione a variável para as Colunas:", low_cardinality_cols, index=config.DEFAULT_INDEX_ANALISE_CRUZADA[1], key=f"crosstab_col2{key_suffix}")
 
-    if col1 == col2:
-        st.error("Por favor, selecione duas variáveis diferentes para a análise.")
-        return
+        if col1 == col2:
+            st.error("Por favor, selecione duas variáveis diferentes.", icon="🚨")
+            return
 
-    with st.expander("Filtros Adicionais"):
-        # st.subheader("Filtros Adicionais")
-        st.markdown("Refine os dados incluídos na análise selecionando os valores de cada variável.")
-    
-        filt_col1, filt_col2 = st.columns(2)
-        with filt_col1:
-            # Filtro para os valores da primeira variável
-            unique_vals1 = sorted(df[col1].dropna().unique())
-            selected_vals1 = st.multiselect(
-                f"Valores a incluir de **{col1}**:",
-                options=unique_vals1,
-                default=unique_vals1
+        with st.expander("Filtros Adicionais"):
+            # st.subheader("Filtros Adicionais")
+            st.markdown("Refine os dados incluídos na análise selecionando os valores de cada variável.")
+        
+            filt_col1, filt_col2 = st.columns(2)
+            with filt_col1:
+                # Filtro para os valores da primeira variável
+                unique_vals1 = sorted(df[col1].dropna().unique())
+                selected_vals1 = st.multiselect(
+                    f"Valores a incluir de **{col1}**:",
+                    options=unique_vals1,
+                    default=unique_vals1,
+                    key=f"crosstab_ms_col1{key_suffix}"
+                )
+
+            with filt_col2:
+                # Filtro para os valores da segunda variável
+                unique_vals2 = sorted(df[col2].dropna().unique())
+                selected_vals2 = st.multiselect(
+                    f"Valores a incluir de **{col2}**:",
+                    options=unique_vals2,
+                    default=unique_vals2,
+                    key=f"crosstab_ms_col2{key_suffix}"
+                )
+
+        st.divider()
+        
+        df_crosstab = df[df[col1].isin(selected_vals1) & df[col2].isin(selected_vals2)]
+        try:
+            crosstab_df = pd.crosstab(df_crosstab[col1], df_crosstab[col2])
+            # Cria o mapa de calor (heatmap) com Plotly
+            fig = px.imshow(
+                crosstab_df,
+                text_auto=True,
+                aspect="auto",
+                # title=f"Mapa de Calor: Relação entre {col1} e {col2}",
+                labels=dict(x=f"<b>{col2}</b>", y=f"<b>{col1}</b>", color="Contagem"),
+                color_continuous_scale=px.colors.sequential.Blues
+            )
+            
+            fig.update_xaxes(side="top")
+            fig.update_layout(font=dict(size=14))
+            st.plotly_chart(fig, use_container_width=True, key=f"crosstab_chart{key_suffix}")
+
+            with st.expander("Ver Tabela de Frequência Detalhada"):
+                st.dataframe(crosstab_df, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao gerar a análise cruzada: {e}")
+        
+        if instance_id:
+            st.button(
+                "❌ Remover Análise", 
+                key=f"remove_crosstab_{instance_id}",
+                on_click=state_manager.remove_extra_analysis,
+                args=('crosstab', instance_id),
+                use_container_width=True
             )
 
-        with filt_col2:
-            # Filtro para os valores da segunda variável
-            unique_vals2 = sorted(df[col2].dropna().unique())
-            selected_vals2 = st.multiselect(
-                f"Valores a incluir de **{col2}**:",
-                options=unique_vals2,
-                default=unique_vals2
-            )
+    # Renderiza a análise principal
+    render_crosstab_instance()
+
+    # Renderiza as análises extras
+    for item in st.session_state.extra_crosstabs:
+        st.divider()
+        render_crosstab_instance(instance_id=item['id'])
 
     st.divider()
-
-    df_crosstab = df[df[col1].isin(selected_vals1) & df[col2].isin(selected_vals2)]
-    try:
-        # Calcula a tabela de contingência (crosstab)
-        crosstab_df = pd.crosstab(df_crosstab[col1], df_crosstab[col2])
-
-        # Cria o mapa de calor (heatmap) com Plotly
-        fig = px.imshow(
-            crosstab_df,
-            text_auto=True,
-            aspect="auto",
-            # title=f"Mapa de Calor: Relação entre {col1} e {col2}",
-            labels=dict(x=f"<b>{col2}</b>", y=f"<b>{col1}</b>", color="Contagem"),
-            color_continuous_scale=px.colors.sequential.Blues
-        )
-        
-        fig.update_xaxes(side="top")
-        fig.update_layout(font=dict(size=14))
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("Ver Tabela de Frequência Detalhada"):
-            st.dataframe(crosstab_df, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Ocorreu um erro ao gerar a análise cruzada: {e}")
-
+    st.button(
+        "➕ Adicionar Nova Análise Cruzada",
+        on_click=state_manager.add_extra_analysis,
+        args=('crosstab',),
+        use_container_width=True
+    )
+ 
 
 def display_timeseries_tab(df: pd.DataFrame):
     """
@@ -510,81 +565,107 @@ def display_timeseries_tab(df: pd.DataFrame):
         st.warning("Nenhuma coluna de data foi encontrada nos dados para realizar a análise temporal.")
         return
 
-    # Identifica colunas categóricas para segmentação
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    segmentation_options = ["Nenhum (Total Geral)"] + sorted(categorical_cols)
+    def render_timeseries_instance(instance_id=None):
+        key_suffix = f"_{instance_id}" if instance_id else "_main"
 
-    col1_selection, col2_selection, col3_selection = st.columns(3)
+        col1_selection, col2_selection, col3_selection = st.columns(3)
 
-    with col1_selection:
-        date_col = st.selectbox("Selecione a coluna de data para análise:", date_cols, index=config.DEFAULT_INDEX_DATA_ANALISE_TEMPORAL)
-    
-    with col2_selection:
-        granularity = st.selectbox(
-            "Selecione a granularidade do tempo:",
-            ['Ano', 'Trimestre', 'Mês', 'Semana', 'Dia']
-        )
+        with col1_selection:
+            date_col = st.selectbox("Selecione a coluna de data para análise:", date_cols, key=f"ts_date_col{key_suffix}", index=config.DEFAULT_INDEX_DATA_ANALISE_TEMPORAL)
+        
+        with col2_selection:
+            granularity = st.selectbox(
+                "Selecione a granularidade do tempo:",
+                ['Ano', 'Trimestre', 'Mês', 'Semana', 'Dia'],
+                key=f"ts_granularity{key_suffix}"
+            )
 
-    with col3_selection:
-        segment_col = st.selectbox("Segmentar por (opcional):", segmentation_options, 
-                                   help=f"Apenas colunas com até {CARDINALITY_LIMIT} valores únicos são exibidas.")
+        with col3_selection:
+            segment_col = st.selectbox("Segmentar por (opcional):", segmentation_options, 
+                                    help=f"Apenas colunas com até {CARDINALITY_LIMIT} valores únicos são exibidas.",
+                                    key=f"ts_segment_col{key_suffix}")
+
+        st.divider()
+
+        try:
+            granularity_map = {
+                'Ano': 'Y', 'Trimestre': 'Q', 'Mês': 'M', 'Semana': 'W', 'Dia': 'D'
+            }
+            resample_code = granularity_map[granularity]
+
+            # --- Prepara o DataFrame dinamicamente com as colunas necessárias ---
+            cols_to_keep = [date_col, config.KEY_COLUMN_PRINCIPAL]
+            if segment_col != "Nenhum (Total Geral)":
+                cols_to_keep.append(segment_col)
+            
+            # Garante que a lista de colunas seja única para evitar erros
+            unique_cols = list(set(cols_to_keep))
+            df_time = df[unique_cols].copy()
+            df_time = df_time.dropna(subset=cols_to_keep) # Remove linhas sem data ou segmento
+
+            if df_time.empty:
+                st.info("Não há dados válidos na coluna de data selecionada para o período filtrado.")
+                return
+
+            if segment_col == "Nenhum (Total Geral)":
+                # Usa .agg() para uma saída consistente
+                time_series_data = df_time.groupby(pd.Grouper(key=date_col, freq=resample_code)).agg(
+                    Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
+                ).reset_index().rename(columns={date_col: 'Período'})
+                y_col = 'Contagem_de_Casos'
+                color_arg = None
+                title = f"Evolução de Casos por {granularity} ({date_col})"
+            else:
+                # Usa .agg() para uma saída consistente
+                time_series_data = df_time.groupby([pd.Grouper(key=date_col, freq=resample_code), segment_col]).agg(
+                    Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
+                ).reset_index().rename(columns={date_col: 'Período'})
+                y_col = 'Contagem_de_Casos'
+                color_arg = segment_col
+                title = f"Evolução de Casos por {granularity} ({date_col}), segmentado por {segment_col}"
+
+            # Cria o gráfico de linha com Plotly
+            fig = px.line(
+                time_series_data,
+                x='Período',
+                y=y_col,
+                color=color_arg,
+                title=title,
+                markers=True,
+                labels={'Período': f'Período ({granularity})', y_col: 'Número de Casos Únicos'}
+            )
+            
+            fig.update_layout(font=dict(size=14))
+            st.plotly_chart(fig, use_container_width=True, key=f"timeseries_chart{key_suffix}")
+
+            with st.expander("Ver Dados da Série Temporal Detalhadamente"):
+                st.dataframe(time_series_data, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao gerar a análise de série temporal: {e}")
+
+        if instance_id:
+            st.button(
+                "❌ Remover Análise", 
+                key=f"remove_timeseries_{instance_id}",
+                on_click=state_manager.remove_extra_analysis,
+                args=('timeseries', instance_id),
+                use_container_width=True
+            )
+
+    # Renderiza a análise principal
+    render_timeseries_instance()
+
+    # Renderiza as análises extras
+    for item in st.session_state.extra_timeseries:
+        st.divider()
+        render_timeseries_instance(instance_id=item['id'])
 
     st.divider()
-
-    try:
-        granularity_map = {
-            'Ano': 'Y', 'Trimestre': 'Q', 'Mês': 'M', 'Semana': 'W', 'Dia': 'D'
-        }
-        resample_code = granularity_map[granularity]
-
-        # --- Prepara o DataFrame dinamicamente com as colunas necessárias ---
-        cols_to_keep = [date_col, config.KEY_COLUMN_PRINCIPAL]
-        if segment_col != "Nenhum (Total Geral)":
-            cols_to_keep.append(segment_col)
-        
-        # Garante que a lista de colunas seja única para evitar erros
-        unique_cols = list(set(cols_to_keep))
-        df_time = df[unique_cols].copy()
-        df_time = df_time.dropna(subset=cols_to_keep) # Remove linhas sem data ou segmento
-
-        if df_time.empty:
-            st.info("Não há dados válidos na coluna de data selecionada para o período filtrado.")
-            return
-
-        if segment_col == "Nenhum (Total Geral)":
-            # Usa .agg() para uma saída consistente
-            time_series_data = df_time.groupby(pd.Grouper(key=date_col, freq=resample_code)).agg(
-                Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
-            ).reset_index().rename(columns={date_col: 'Período'})
-            y_col = 'Contagem_de_Casos'
-            color_arg = None
-            title = f"Evolução de Casos por {granularity} ({date_col})"
-        else:
-            # Usa .agg() para uma saída consistente
-            time_series_data = df_time.groupby([pd.Grouper(key=date_col, freq=resample_code), segment_col]).agg(
-                Contagem_de_Casos=(config.KEY_COLUMN_PRINCIPAL, 'nunique')
-            ).reset_index().rename(columns={date_col: 'Período'})
-            y_col = 'Contagem_de_Casos'
-            color_arg = segment_col
-            title = f"Evolução de Casos por {granularity} ({date_col}), segmentado por {segment_col}"
-
-        # Cria o gráfico de linha com Plotly
-        fig = px.line(
-            time_series_data,
-            x='Período',
-            y=y_col,
-            color=color_arg,
-            title=title,
-            markers=True,
-            labels={'Período': f'Período ({granularity})', y_col: 'Número de Casos Únicos'}
-        )
-        
-        fig.update_layout(font=dict(size=14))
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("Ver Dados da Série Temporal Detalhadamente"):
-            st.dataframe(time_series_data, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Ocorreu um erro ao gerar a análise de série temporal: {e}")
+    st.button(
+        "➕ Adicionar Nova Análise Temporal",
+        on_click=state_manager.add_extra_analysis,
+        args=('timeseries',),
+        use_container_width=True
+    )
 

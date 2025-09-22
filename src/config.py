@@ -46,18 +46,20 @@ LIST_FILTROS_SECUNDARIOS: List[str] = [
     'Data Encerrado', 
     'Duração Dias', 
     'Última Movimentação',
+    'Proc. Lei Artigo', 
+    'Proc. Lei Artigo Isolado', 
 ]
 
 LIST_AGREGATION_VIEWS: Set[str] = [
     'Tipo', 
     'Delegacia', 
-    'Tipo Documento', 
-    'Origem Documento', 
-    'Órgão/Vítima', 
+    'Documento de Origem', 
+    'Órgão de Origem', 
+    'Órgão Vítima', 
     'Área de Atribuição', 
     'Proc. Lei',
     'Lei-Artigo',
-    'Tipo Penal', 
+    # 'Tipo Penal', 
     'Matéria Prometheus', 
 ]
 
