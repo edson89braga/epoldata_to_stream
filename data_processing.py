@@ -2,6 +2,7 @@ import os, json
 from time import perf_counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -336,6 +337,55 @@ def diagnose_object_columns(df: pd.DataFrame, verbose: bool = True) -> Dict[str,
 # === Outras funções utilitárias ===
 
 @timer_decorator
+def obfuscate_name_columns(df: pd.DataFrame, column_names: Union[str, List[str]]) -> pd.DataFrame:
+    """
+    Ofusca os nomes em uma ou mais colunas de um DataFrame.
+
+    A transformação segue a regra: primeiro nome em maiúsculas, seguido pelas
+    iniciais maiúsculas dos sobrenomes.
+    Exemplo: "Carlos Paiva Neto Braga" -> "CARLOS PNB"
+
+    Args:
+        df (pd.DataFrame): O DataFrame a ser modificado.
+        column_names (Union[str, List[str]]): O nome da coluna ou uma lista de
+            nomes de colunas contendo os nomes completos.
+
+    Returns:
+        pd.DataFrame: Um novo DataFrame com as colunas de nomes ofuscadas.
+        
+    Raises:
+        ValueError: Se alguma das colunas especificadas não existir no DataFrame.
+    """
+    if isinstance(column_names, str):
+        column_names = [column_names]
+
+    for col_name in column_names:
+        if col_name not in df.columns:
+            raise ValueError(f"A coluna '{col_name}' não foi encontrada no DataFrame.")
+
+    df_obfuscated = df.copy()
+
+    def _obfuscate_name(name: str) -> str:
+        """Função auxiliar para transformar um único nome."""
+        if pd.isna(name) or not isinstance(name, str) or not name.strip():
+            return name  # Retorna o valor original se for nulo, não-string ou vazio
+
+        parts = name.strip().split()
+        if len(parts) == 1:
+            return parts[0].upper()
+
+        first_name = parts[0].upper()
+        initials = "".join([part[0].upper() for part in parts[1:]])
+
+        return f"{first_name} {initials}"
+
+    for col_name in column_names:
+        df_obfuscated[col_name] = df_obfuscated[col_name].apply(_obfuscate_name)
+    
+    print(f"\nColunas {', '.join(column_names)} ofuscadas com sucesso.")
+    return df_obfuscated
+
+@timer_decorator
 def convert_spreadsheet_to_parquet(
     input_path: str, output_path: Optional[str] = None
 ) -> Optional[str]:
@@ -396,7 +446,8 @@ def aggregate_column_to_list(
 ) -> pd.DataFrame:
     """
     Agrupa um DataFrame por uma coluna chave e agrega os valores de outra
-    colunas em listas, tornando a chave única.
+    colunas em listas, tornando a chave única. Após a agregação, listas
+    que contêm apenas placeholders (ex: ['-']) são convertidas para NaN.
 
     Para as demais colunas, o primeiro valor encontrado para cada chave é mantido.
 
@@ -425,6 +476,25 @@ def aggregate_column_to_list(
         agg_rules[col_agg] = list
 
     df_aggregated = df.groupby(key_column).agg(agg_rules).reset_index()
+    
+    # --- Pós-processamento para limpar listas vazias ou com placeholders ---
+    # Define placeholders que devem ser considerados "vazios"
+    placeholders = {'-', '', 'None', '<NA>', 'nan', 'nat', 'undefined'}
+
+    for col_agg in columns_to_aggregate:
+        # Função para limpar cada lista na série
+        def clean_list(lst):
+            if not isinstance(lst, list):
+                return lst # Retorna o valor original se não for uma lista
+            
+            # Remove placeholders e valores nulos da lista
+            cleaned = [item for item in lst if pd.notna(item) and str(item) not in placeholders]
+            
+            # Se a lista ficar vazia, retorna np.nan, caso contrário, retorna a lista limpa
+            return np.nan if not cleaned else cleaned
+
+        if col_agg in df_aggregated.columns:
+            df_aggregated[col_agg] = df_aggregated[col_agg].apply(clean_list)
 
     print(f"\nDataframe com colunas agregadas:\n Shape anterior: {df.shape}\n Shape após: {df_aggregated.shape}\n")
     return df_aggregated
@@ -432,35 +502,78 @@ def aggregate_column_to_list(
 @timer_decorator
 def merge_dataframes(
     df_left: pd.DataFrame,
-    df_right: pd.DataFrame,
+    dfs_right: Union[pd.DataFrame, List[pd.DataFrame]],
     key_column: str,
     how: str = "inner",
 ) -> pd.DataFrame:
     """
-    Realiza o merge de dois DataFrames com base em uma coluna chave comum.
+    Realiza o merge de um DataFrame à esquerda com um ou mais DataFrames à direita,
+    tratando de forma inteligente as colunas com nomes sobrepostos.
+
+    Regras de tratamento:
+    - A coluna do DataFrame da esquerda sempre prevalece.
+    - Se uma coluna da direita já existe na esquerda, seus valores são comparados.
+    - Um aviso é emitido se houver valores divergentes (onde o valor da direita não é nulo).
+    - A coluna duplicada da direita é descartada após a verificação.
 
     Args:
         df_left (pd.DataFrame): O DataFrame da esquerda.
-        df_right (pd.DataFrame): O DataFrame da direita.
-        key_column (str): O nome da coluna a ser usada como chave para o merge.
-        how (str, optional): Tipo de merge a ser realizado.
-            Padrão é 'inner'. Opções: 'left', 'right', 'outer', 'inner'.
+        dfs_right (Union[pd.DataFrame, List[pd.DataFrame]]): Um ou mais DataFrames para mesclar.
+        key_column (str): A coluna chave para o merge.
+        how (str, optional): Tipo de merge a ser realizado. Padrão 'inner'.
 
     Returns:
         pd.DataFrame: O DataFrame resultante do merge.
-        
-    Raises:
-        ValueError: Se a coluna chave não existir em um dos DataFrames.
     """
-    if key_column not in df_left.columns or key_column not in df_right.columns:
-        raise ValueError(
-            f"A coluna chave '{key_column}' não foi encontrada em ambos os DataFrames."
-        )
-    
-    print(f"Shape df1: {df_left.shape}")
-    print(f"Shape df2: {df_right.shape}")
-    merged_df = pd.merge(df_left, df_right, on=key_column, how=how)
-    print(f"\nShape merged: {merged_df.shape}\n")
+    if not isinstance(dfs_right, list):
+        dfs_right = [dfs_right]
+
+    merged_df = df_left.copy()
+    print(f"Shape inicial df_left: {merged_df.shape}")
+
+    for i, df_right in enumerate(dfs_right):
+        if key_column not in merged_df.columns or key_column not in df_right.columns:
+            raise ValueError(
+                f"A coluna chave '{key_column}' não foi encontrada para o merge com o DataFrame de índice {i}."
+            )
+
+        print(f"--- Mesclando com DataFrame direito de índice {i} (Shape: {df_right.shape}) ---")
+
+        # Identifica colunas sobrepostas (exceto a chave)
+        overlapping_cols = [col for col in df_right.columns if col in merged_df.columns and col != key_column]
+
+        # Realiza o merge, usando sufixos para identificar as colunas de origem
+        temp_merged = pd.merge(merged_df, df_right, on=key_column, how=how, suffixes=('_left', '_right'))
+
+        if overlapping_cols:
+            print(f"Colunas sobrepostas encontradas: {overlapping_cols}. Verificando divergências...")
+            for col in overlapping_cols:
+                col_left = f"{col}_left"
+                col_right = f"{col}_right"
+
+                # Máscara para encontrar divergências onde o valor da direita não é nulo
+                divergence_mask = (
+                    (temp_merged[col_left] != temp_merged[col_right]) &
+                    (temp_merged[col_right].notna())
+                )
+
+                if divergence_mask.any():
+                    divergent_count = divergence_mask.sum()
+                    print(f"⚠️  Aviso: {divergent_count} divergência(s) encontrada(s) na coluna '{col}'. O valor original (à esquerda) será mantido.")
+                    
+                    # Mostra alguns exemplos da divergência
+                    divergent_samples = temp_merged.loc[divergence_mask, [key_column, col_left, col_right]].head(3)
+                    print("   Exemplos de divergência:")
+                    print(divergent_samples.to_string(index=False))
+
+                # Remove a coluna da direita e renomeia a da esquerda para o nome original
+                temp_merged.drop(columns=[col_right], inplace=True)
+                temp_merged.rename(columns={col_left: col}, inplace=True)
+
+        merged_df = temp_merged
+        print(f"Shape após merge: {merged_df.shape}")
+
+    print(f"\nShape final merged: {merged_df.shape}\n")
     return merged_df
 
 @timer_decorator
@@ -518,14 +631,15 @@ def confirm_cols_exploded(df: pd.DataFrame, key_column: str):
 
         return lista_cols_explodidas
 
-
 # === 
 
+# Referente à Planilha "Casos - Analítico" do ePol bi:
 colunas_uteis = [
     
     # Qual procedimento, tipo e situação
     "Proc. Tipo", 
     "Proc. Identificação", 
+    "Tipo Instauração",
     "Número do Processo", 
     "Proc. Situação", 
     "Situação Sigla", 
@@ -545,18 +659,27 @@ colunas_uteis = [
     "Data Distribuição", 
     "Data Instauração", 
     "Data Relatório", 
+    "Data Vencimento",
     "Data Encerrado", 
+
+    # Colunas extrar do Análítico de Alertas_coger
+    "Proc. NC Data Recebimento",
+    "Proc. NC Data Cadastro",
+    "Proc. NC Data Parecer",
+    "Proc. NC Data Distribuição",
+    "Dias Vencido",
+
     "Duração Dias", 
     "Última Movimentação", 
     
     # Àrea temática destinada
     "Proc. Tipo Documento", 
     "Proc. Origem Documento", 
-    "Proc. Área de Atribuição", 
-    "Matéria Registro Especial",
-    "Proc. Tratamento Especial",
+    "Proc. Área de Atribuição",   # Coluna extra
+    "Matéria Registro Especial",  
+    "Proc. Tratamento Especial",  # Coluna extra
 
-    # Tipificação penal
+    # Tipificação penal           # Colunas extras
     "Proc. Lei", 
     "Proc. Lei Artigo", 
     "Proc. Lei Artigo Isolado", 
@@ -565,13 +688,19 @@ colunas_uteis = [
     "Proc. Incidência Penal Principal", 
     
     # Lesados
-    "Proc. Órgão Vítima", 
+    "Proc. Órgão Vítima",         # Coluna extra
+
+    # Índices de Alertas          # Colunas extras
+    "Proc. Alerta Tipo",
+    "Proc. Saneamento Tipo",
+    "Proc. Data Cota"
 
 ]
 
 type_mapping = {
     'Proc. Tipo':			            'string' ,
     'Proc. Identificação':              'string' ,
+    'Tipo Instauração':                 'string' ,
     'Número do Processo':               'string' ,
     'Proc. Situação':                   'string' ,
     'Situação Sigla':                   'string' ,
@@ -601,6 +730,15 @@ type_mapping = {
     "Lei-Artigo":                       'string' ,
     'Proc. Tipo Penal':                 'string' ,
     'Proc. Incidência Penal Principal': 'string' ,    
+    
+    'Proc. NC Data Recebimento'     : 'datetime', 
+    'Proc. NC Data Cadastro'        : 'datetime', 
+    'Proc. NC Data Parecer'         : 'datetime', 
+    'Proc. NC Data Distribuição'    : 'datetime', 
+    'Dias Vencido'                  : 'numeric' ,
+    'Proc. Data Cota'               : 'datetime', 
+    'Proc. Alerta Tipo'             : 'string', 
+    'Proc. Saneamento Tipo'         : 'string', 
 }
 
 rename_cols_mapping = {
@@ -617,13 +755,20 @@ rename_cols_mapping = {
     "Proc. Lei Artigo"                 : "Proc. Artigo",
     "Proc. Tipo Penal"                 : "Tipo Penal",                
     "Proc. Incidência Penal Principal" : "Incidência Penal Principal",
-    "Proc. Órgão Vítima"               : "Órgão Vítima",              
+    "Proc. Órgão Vítima"               : "Órgão Vítima",    
+    "Proc. NC Data Recebimento"     : "NC Data Recebimento", 
+    "Proc. NC Data Cadastro"        : "NC Data Cadastro", 
+    "Proc. NC Data Parecer"         : "NC Data Parecer", 
+    "Proc. NC Data Distribuição"    : "NC Data Distribuição", 
+    "Proc. Data Cota"               : "Data Cota", 
+    "Proc. Alerta Tipo"             : "Tipo Alerta", 
+    "Proc. Saneamento Tipo"         : "Tipo Saneamento", 
 }
 
-file_name = "Casos_SP_22-09-2025"
 
 @timer_decorator
-def pipeline_tratatamento_dados():
+def pipeline_tratatamento_dados_1():
+    file_name = "Casos_SP_22-09-2025" # filtros: UF ('SP'), Situação ('Em Andamento'), Data de extração: **dd/mm/2025**
 
     xlsx_principal = rf"C:\\Users\\edson.eab\\Downloads\\{file_name}.xlsx"
     xlsx_complementar = rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar.xlsx"
@@ -672,6 +817,7 @@ def pipeline_tratatamento_dados():
     print(df_final.info())
 
     df_final = df_final.rename(columns=rename_cols_mapping)
+    df_final = obfuscate_name_columns(df_final, ["Delegado Atual", "Escrivão"])
 
     # info_df = create_info_dataframe(df_final) # print(info_df) # já feito em print_dataframe_info
 
@@ -686,4 +832,263 @@ def pipeline_tratatamento_dados():
 
     return output_path
 
+@timer_decorator
+def pipeline_tratatamento_dados_2():
+    base_name = "Casos_SP_23-10-2025" # filtros: UF ('SP'), Situação ('Em Andamento'), Data de extração: **dd/mm/2025**
 
+    xlsx_principal = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}.xlsx"
+    xlsx_complementar1 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoAlertas.xlsx"
+    xlsx_complementar2 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoSaneamentos.xlsx" 
+    xlsx_complementar3 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Complementar.xlsx" # Incluída coluna 'Proc. Data Cota'
+
+    path_parquet_df_principal = convert_spreadsheet_to_parquet(xlsx_principal) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}.parquet"
+    path_parquet_df_complementar1 = convert_spreadsheet_to_parquet(xlsx_complementar1) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoAlertas.parquet"
+    path_parquet_df_complementar2 = convert_spreadsheet_to_parquet(xlsx_complementar2) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoSaneamentos.parquet"
+    path_parquet_df_complementar3 = convert_spreadsheet_to_parquet(xlsx_complementar3) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Complementar.parquet"
+
+    # O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'
+    df_principal  = pd.read_parquet(path_parquet_df_principal)
+    assert 'Proc. Identificação' in df_principal.columns and df_principal['Proc. Identificação'].nunique() == df_principal.shape[0], "O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'"
+
+    df_complementar1 = pd.read_parquet(path_parquet_df_complementar1)
+    df_complementar2 = pd.read_parquet(path_parquet_df_complementar2)
+    df_complementar3 = pd.read_parquet(path_parquet_df_complementar3)
+
+    # O df_complementar possui 'Proc. Identificação' duplicados em razão das colunas 'Proc. Alerta Tipo' constar explodida
+    assert confirm_cols_exploded(df_complementar1, 'Proc. Identificação') == ['Proc. Alerta Tipo']
+    assert confirm_cols_exploded(df_complementar2, 'Proc. Identificação') == ['Proc. Alerta Tipo', 'Proc. Saneamento Tipo', 'Proc. Prescrição Situação']
+
+    # Tratando df_complementar1 
+    n_procs_anterior1 = df_complementar1['Proc. Identificação'].unique().shape[0]
+    df_complementar_tratado1 = aggregate_column_to_list(df=df_complementar1, 
+                                                        key_column='Proc. Identificação', 
+                                                        columns_to_aggregate=['Proc. Alerta Tipo'])
+    assert df_complementar_tratado1.shape[0] == n_procs_anterior1
+
+    # Tratando df_complementar2
+    n_procs_anterior2 = df_complementar2['Proc. Identificação'].unique().shape[0]
+    df_complementar2 = df_complementar2[['Proc. Identificação', 'Proc. Saneamento Tipo']]
+    df_complementar_tratado2 = aggregate_column_to_list(df=df_complementar2, 
+                                                        key_column='Proc. Identificação', 
+                                                        columns_to_aggregate=['Proc. Saneamento Tipo'])
+    assert df_complementar_tratado2.shape[0] == n_procs_anterior2
+    
+    # df_complementar_tratado.to_parquet(rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar_Tratado.parquet")
+
+    df_completo = merge_dataframes(df_principal, [df_complementar_tratado1, df_complementar_tratado2, df_complementar3], 
+                                    key_column='Proc. Identificação', how='left')
+
+    assert df_principal.shape[0] == df_completo.shape[0], "O df_principal deve possuir a mesma quantidade de linhas do df_completo"
+    assert df_principal.shape[1] < df_completo.shape[1], "O df_principal deve possuir menos colunas do que o df_completo"
+
+    output_path_0 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Completo.parquet"
+    df_completo.to_parquet(output_path_0, index=False)
+
+    # df['Proc. Identificação'].value_counts()
+    # df.duplicated().sum()
+
+    # --- ---------------------------------------------------------------------
+    # Conferências de confrontamento:
+    tipos_alertas = [
+        'NCV Pendente Parecer > 15 dias',
+        'NC Pendente Parecer > 15 dias',
+        'NC Pendente Instauração > 30 dias',
+        'CP Vencido > 10 dias',
+        'TC Vencido > 10 dias',
+        'RE Vencido > 10 dias',
+        'MP Vencido > 10 dias',
+        'NCV Vencido > 90 dias',
+        'NC Vencido > 90 dias',
+        'IPL Vencido > 10 dias',
+        'IPL Cota Duração > 1 ano', 
+        'IPL Duração > 3 anos',
+        'IPL Duração > 5 anos',
+        'TC Duração > 90 dias'
+    ]
+    df = df_completo
+    # datetime_target = datetime(2025, 10, 20)
+    datetime_target = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+    dfs_filtros = [
+        df.loc[(df['Proc. Tipo']=='NCV') & (df['Situação Sigla']=='Aguardando Parecer')    & (datetime_target-df['Data Parecer'] > timedelta(days=15))],
+        df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Parecer')     & (datetime_target-df['Data Cadastro'] > timedelta(days=15))],
+        df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Instauração') & (datetime_target-df['Data Parecer'] > timedelta(days=30))],
+        df.loc[(df['Proc. Tipo']=='CP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+        df.loc[(df['Proc. Tipo']=='TC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+        df.loc[(df['Proc. Tipo']=='RE') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+        df.loc[(df['Proc. Tipo']=='MP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+        df.loc[(df['Proc. Tipo']=='NCV') & (datetime_target-df['Data Vencimento']>= timedelta(days=91))],
+        df.loc[(df['Proc. Tipo']=='NC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=91))],
+        df.loc[(df['Proc. Tipo']=='IPL') & (datetime_target-df['Data Vencimento']>= timedelta(days=11)) & (~df['Situação Sigla'].isin(['Apreciação', 'Pedido de Baixa']))],
+        df.loc[(df['Proc. Tipo']=='IPL') & (df['Proc. Data Cota'] <  ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=1)) )],
+        df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=3)) )],
+        df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=5)) )],
+        df.loc[(df['Proc. Tipo']=='TC')  & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(days=90)) )],
+    ]
+
+    registros_extras = {}
+    for tipo_alerta, df_check in zip(tipos_alertas, dfs_filtros):
+        print('\n')
+        df_a = df_check
+        df_b = df_complementar1.loc[df_complementar1['Proc. Alerta Tipo']==tipo_alerta]
+        #
+        set_a = set(df_a['Proc. Identificação'])
+        set_b = set(df_b['Proc. Identificação'])
+        #
+        if set_a == set_b: 
+            print(f"Alerta '{tipo_alerta}' OK")
+        else:
+            if set_b - set_a:
+                print(f"Alerta '{tipo_alerta}' FALTAndo registros: !!! !!! !!!")
+                print(set_b - set_a)
+                # raise ValueError(f"Alerta '{tipo_alerta}' FALTAndo registros!")
+            elif set_a - set_b:
+                print(f"Alerta '{tipo_alerta}' EXTRAs:")
+                print(set_a - set_b)
+                registros_extras[tipo_alerta] = set_a - set_b
+    # --- -------------------------------------------------------------------
+
+    df_reduzido = filter_columns(df_completo, colunas_uteis)
+    # column_info = detect_column_types(df_reduzido) # print(column_info) 
+
+    df_final, _ = apply_column_types(df_reduzido, type_mapping)
+    print(df_final.info())
+
+    df_final = df_final.rename(columns=rename_cols_mapping)
+    df_final = obfuscate_name_columns(df_final, ["Delegado Atual", "Escrivão"])
+
+    # info_df = create_info_dataframe(df_final) # print(info_df) # já feito em print_dataframe_info
+
+    print_dataframe_info(df_final)
+
+    output_path = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Tratado.parquet"
+    df_final.to_parquet(output_path, index=False)
+
+    # filtered_df = df.loc[df['Proc. Situação'] == "Em Andamento"]
+    # exloded_df = filtered_df.explode('Proc. Tipo Penal')
+    # exloded_df.to_excel(r"C:\\Users\\edson.eab\\Downloads\\{file_name}_TiposPenal.xlsx", index=False)
+
+    return output_path
+
+
+'''
+
+Colunas DF Analítico - Alertas SP = [
+    Proc. Tipo
+    Proc. Identificação
+    Proc. Alerta Tipo
+    Proc. Delegado Atual
+    Proc. Escrivão Nome
+    Proc. Data Fato
+    Proc. NC Data Recebimento
+    Proc. NC Data Cadastro
+    Proc. NC Data Parecer
+    Proc. NC Data Distribuição
+    Proc. Data Instauração
+    Proc. Data Relatório
+    Proc. Data Vencimento
+    Proc. Data Encerrado
+    Proc. Data Última Movimentação
+    N° Processo MPF
+    N° Processe Justiça
+    Proc. Processo Vara
+    Proc. Situação
+    Valor a Apurar
+    Proc. Duração Dias
+    Lotação Sigla
+    Proc. Situação Sigla
+    Proc. Delegacia
+    Proc. Delegacia Instauração
+    Proc. Retombado
+    Proc. Delegado Matrícula
+    Proc. Delegado Instaurador Cargo
+    Unidade Siscart
+    Unidade ePol
+    Delegado Sistema Corporativo
+    Procedimento Em Andamento ID
+]
+
+Colunas DF Analítico - Alertas e Saneam SP = [
+    Proc. Identificação
+    Proc. Data Instauração        
+    Proc. Alerta Tipo
+    Proc. Saneamento Tipo
+    Proc. Tipo Encerrado
+    Proc. Data Vencimento
+    Dias Vencido
+    Proc. Delegacia
+    Proc. Delegado Nome
+    Proc. Escrivão Nome
+    Proc. Data Última Movimentação
+    Proc. Referência Siscart      
+    Processo nº
+    Proc. Relatado
+    Proc. Data Fato
+    Proc. Unidade Exercício       
+    Proc. Situação Sigla
+    Proc. Delegado Instaurador    
+    Proc. Tipo
+    Proc. Processo Vara
+    Tribunal do Caso
+    Proc. Processo MPF
+    Proc. Localização
+    Proc. Prescrição Situação     
+    Proc. Última Página
+    Proc. Relatado Não Movimentado
+    Proc. Alerta Quantidade
+    Proc. Perícia em Andamento?    
+]
+
+Colunas DF Analítico - Casos SP = [
+    Proc. Tipo
+    Proc. Tipo Documento
+    Proc. Crime CEP
+    Tipo Instauração
+    Unidade UF
+    Lotação Sigla
+    Proc. Identificação
+    Proc. Referência Siscart
+    Data Fato
+    Data Recebimento
+    Data Cadastro
+    Data Parecer
+    Data Distribuição
+    Data Instauração
+    Data Relatório
+    Data Vencimento
+    Data Encerrado
+    Proc. Situação
+    Indiciados
+    Presos
+    Duração Dias
+    Valor a Apurar
+    Valor Apurado
+    Última Movimentação
+    N° Processo MPF
+    Número do Processo
+    Tribunal do Caso
+    Seção/Subseção/Comarca/Zona/Órgão Colegiado
+    Vara/Relator
+    Situação Original
+    Proc. Protocolo
+    Proc. Origem Documento
+    Proc. Tipo Local
+    Município Crime
+    UF Crime
+    Situação Sigla
+    Proc. Delegacia
+    Delegacia Instauração
+    Proc. Retombado
+    Proc. Delegado Atual
+    Matr. Delegado Instaurador
+    Cargo Instaurador
+    Delegado Instaurador
+    Proc. Delegado Relator
+    Proc. Escrivão
+    Delegado Sistema Corporativo
+    Proc. Autoria Identificada?
+    Proc. Não Crime?
+    Matéria Registro Especial
+    Proc. Quantidade Foro Privilegiado
+]
+
+'''

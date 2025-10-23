@@ -1,11 +1,15 @@
 # src/gui_components.py
-import io, ast
+import io, ast, numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import timedelta, date
 from . import config
 from . import state_manager
+
+# Vamos remover as 3 primeiras cores, começando do índice 3
+escala_azul_truncada = px.colors.sequential.Blues[3:]
 
 def load_custom_css():
     """Carrega CSS customizado para compactar a UI."""
@@ -79,11 +83,51 @@ def display_home_tab():
 
 @st.cache_data
 def to_excel(df: pd.DataFrame) -> bytes:
-    """Converte um DataFrame para um arquivo Excel em memória."""
+    """
+    Converte um DataFrame para um arquivo Excel em memória, aplicando uma largura
+    de coluna padrão para melhor visualização.
+    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
+        
+        # Acessa a planilha para ajustar a largura das colunas
+        worksheet = writer.sheets['Dados']
+        for column_cells in worksheet.columns:
+            # Define a largura da coluna para 30
+            worksheet.column_dimensions[column_cells[0].column_letter].width =30
+            
     return output.getvalue()
+
+def prepare_explodable_data(df: pd.DataFrame, col_name: str) -> pd.DataFrame:
+    """
+    Prepara uma coluna "explodível", tratando strings de listas e removendo nulos,
+    antes de expandir o DataFrame.
+    """
+    df_copy = df.copy()
+
+    # 1. Substitui placeholders nulos por np.nan para facilitar a remoção
+    df_copy[col_name] = df_copy[col_name].replace(config.NULLS_PLACEHOLDERS_TO_DROP, np.nan)
+    df_processed = df_copy.dropna(subset=[col_name])
+
+    if df_processed.empty:
+        return pd.DataFrame(columns=df.columns)
+
+    # 2. Converte strings que parecem listas (ex: "['a', 'b']") em objetos de lista
+    series_to_analyze = df_processed[col_name]
+    is_stringified_list = series_to_analyze.apply(
+        lambda x: isinstance(x, str) and x.startswith('[') and x.endswith(']')
+    ).any()
+
+    if is_stringified_list:
+        series_to_analyze = series_to_analyze.apply(
+            lambda x: ast.literal_eval(x) if (isinstance(x, str) and x.startswith('[')) else x
+        )
+        df_processed[col_name] = series_to_analyze
+
+    # 3. Explode o DataFrame e remove linhas onde a lista estava vazia
+    df_exploded = df_processed.explode(col_name)
+    return df_exploded.dropna(subset=[col_name])
 
 def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """
@@ -145,13 +189,14 @@ def display_general_table_tab(df: pd.DataFrame):
     with col2_i:
         st.metric("Total de Registros Filtrados", f"{len(df):,}".replace(",", "."))
     
-    selected_columns = st.multiselect(
-        "Selecione as colunas a exibir:",
-        options=df.columns.tolist(),
-        default=df.columns.tolist(),
-        key="multiselect_columns", # Key para o reset
-        on_change=state_manager.invalidate_excel_file
-    )
+    with st.expander("Colunas em exibição", expanded=False):
+        selected_columns = st.multiselect(
+            "Selecione as colunas a exibir na tabela geral abaixo:",
+            options=df.columns.tolist(),
+            default=df.columns.tolist(),
+            key="multiselect_columns", # Key para o reset
+            on_change=state_manager.invalidate_excel_file
+        )
 
     col1, col2 = st.columns(2) # [0.4, 0.3, 0.3])
     with col1:
@@ -251,7 +296,7 @@ def display_aggregations_tab(df: pd.DataFrame):
     with c2:
         st.button(
             "Recolher Tudo" if st.session_state.expanders_state else "Expandir Tudo",
-            on_click=state_manager.toggle_expanders_state)
+            on_click=state_manager.toggle_expanders_state, key="toggle_expand_aggregations")
         
     st.info("As visualizações de agregação são baseadas nos dados atualmente filtrados. Os gráficos exibem até 15 resultados cada.")
 
@@ -337,17 +382,25 @@ def display_aggregations_tab(df: pd.DataFrame):
             def render_chart(container, chart_type, color_mode, sort_by_chart, sort_order_chart):
                 
                 # A ordenação para pegar o Top 15 e a ordenação para exibição são feitas aqui
-                chart_data = agg_data.sort_values(by='Contagem', ascending=False).head(15).sort_values(
-                    by=sort_by_chart,
-                    ascending=(sort_order_chart == "Crescente")
-                )
+                chart_data = agg_data.sort_values(by='Contagem', ascending=False)
 
                 color_arg = col_agg if color_mode == "Multicolor" else None
 
                 if chart_type == "Colunas":
+                    # Para gráfico de colunas, simplesmente pegamos o top 15
+                    chart_data = chart_data.head(15).sort_values(
+                        by=sort_by_chart,
+                        ascending=(sort_order_chart == "Crescente")
+                    )                    
                     fig = _create_bar_chart(chart_data, col_agg, color_mode)
 
                 else: # Circular
+                    # Para pizza, consolidamos os itens menores em "Outros" para manter a proporção correta
+                    if len(chart_data) > 15:
+                        top_data = chart_data.head(14)
+                        others_sum = chart_data.iloc[14:]['Contagem'].sum()
+                        others_row = pd.DataFrame([{col_agg: 'Outros', 'Contagem': others_sum}])
+                        chart_data = pd.concat([top_data, others_row], ignore_index=True)                    
                     fig = _create_pie_chart(chart_data, col_agg, color_arg)
 
                 # Realça os rótulos e fontes do gráfico
@@ -419,18 +472,28 @@ def display_aggregations_tab(df: pd.DataFrame):
 
     st.divider()
     # --- UI para Adicionar Nova Agregação ---
-    st.subheader("Adicionar Nova Análise de Agregação")
-    available_cols = [col for col in df.select_dtypes(include=['object', 'category']).columns if col not in all_cols_to_render + [config.KEY_COLUMN_PRINCIPAL]]
-    
-    add_col1, add_col2 = st.columns([0.8, 0.2], vertical_alignment="bottom")
-    new_col_to_add = add_col1.selectbox("Selecione uma nova coluna para analisar:", available_cols, key="new_agg_col_select")
-    add_col2.button(
-        "➕ Adicionar", 
-        key="add_agg_button",
-        on_click=state_manager.add_extra_analysis,
-        args=('aggregation', {'col': new_col_to_add}),
-        use_container_width=True
-    )
+    with st.expander("Adicionar NOVO Gráfico de Análise", expanded=True):
+        available_cols = [col for col in df.select_dtypes(include=['object', 'category']).columns if col not in all_cols_to_render + [config.KEY_COLUMN_PRINCIPAL]]
+        
+        with st.form(key="add_aggregation_form"):
+            add_col1, add_col2 = st.columns([0.8, 0.2], vertical_alignment="bottom")
+            with add_col1:
+                new_col_to_add = st.selectbox(
+                    "Selecione uma nova coluna para analisar:", 
+                    available_cols, 
+                    key="new_agg_col_select",
+                    disabled=not available_cols # Desabilita se não houver colunas
+                )
+            with add_col2:
+                submitted = st.form_submit_button(
+                    "➕ Adicionar", 
+                    use_container_width=True,
+                    disabled=not available_cols
+                )
+            
+            if submitted and new_col_to_add:
+                state_manager.add_extra_analysis('aggregation', {'col': new_col_to_add})
+                st.rerun()
 
 def display_crosstab_tab(df: pd.DataFrame):
     """
@@ -540,7 +603,6 @@ def display_crosstab_tab(df: pd.DataFrame):
         use_container_width=True
     )
  
-
 def display_timeseries_tab(df: pd.DataFrame):
     """
     Exibe a aba de Análise de Série Temporal, permitindo visualizar a
@@ -668,4 +730,328 @@ def display_timeseries_tab(df: pd.DataFrame):
         args=('timeseries',),
         use_container_width=True
     )
+
+@st.cache_data
+def calculate_dynamic_alerts(_df: pd.DataFrame, target_date: date) -> pd.DataFrame:
+    """
+    Calcula dinamicamente os alertas para um DataFrame com base em uma data-alvo.
+    """
+    df = _df.copy()
+    target_datetime = pd.to_datetime(target_date)
+
+    # Dicionário de Fórmulas. Mapeia o nome do alerta a uma função lambda que retorna uma máscara booleana.
+    # As colunas usadas aqui devem ser as que existem no DataFrame FINAL (após renomeação).
+    alert_formulas = {
+        'NCV Pendente Parecer > 15 dias': lambda d: (d['Tipo'] == 'NCV') & (d['Situação'] == 'Aguardando Parecer') & ((target_datetime - d['Data Parecer']).dt.days > 15),
+        'NC Pendente Parecer > 15 dias': lambda d: (d['Tipo'] == 'NC') & (d['Situação'] == 'Aguardando Parecer') & ((target_datetime - d['Data Cadastro']).dt.days > 15),
+        'NC Pendente Instauração > 30 dias': lambda d: (d['Tipo'] == 'NC') & (d['Situação'] == 'Aguardando Instauração') & ((target_datetime - d['Data Parecer']).dt.days > 30),
+        'CP Vencido > 10 dias': lambda d: (d['Tipo'] == 'CP') & ((target_datetime - d['Data Vencimento']).dt.days >= 11),
+        'TC Vencido > 10 dias': lambda d: (d['Tipo'] == 'TC') & ((target_datetime - d['Data Vencimento']).dt.days >= 11),
+        'RE Vencido > 10 dias': lambda d: (d['Tipo'] == 'RE') & ((target_datetime - d['Data Vencimento']).dt.days >= 11),
+        'MP Vencido > 10 dias': lambda d: (d['Tipo'] == 'MP') & ((target_datetime - d['Data Vencimento']).dt.days >= 11),
+        'NCV Vencido > 90 dias': lambda d: (d['Tipo'] == 'NCV') & ((target_datetime - d['Data Vencimento']).dt.days >= 91),
+        'NC Vencido > 90 dias': lambda d: (d['Tipo'] == 'NC') & ((target_datetime - d['Data Vencimento']).dt.days >= 91),
+        'IPL Vencido > 10 dias': lambda d: (d['Tipo'] == 'IPL') & ((target_datetime - d['Data Vencimento']).dt.days >= 11) & (~d['Situação'].isin(['Apreciação', 'Pedido de Baixa'])),
+        'IPL Cota Duração > 1 ano': lambda d: (d['Tipo'] == 'IPL') & (d['Data Cota'] < (target_datetime - pd.DateOffset(years=1))), 
+        'IPL Duração > 3 anos': lambda d: (d['Tipo'] == 'IPL') & (d['Data Instauração'] < (target_datetime - pd.DateOffset(years=3))),
+        'IPL Duração > 5 anos': lambda d: (d['Tipo'] == 'IPL') & (d['Data Instauração'] < (target_datetime - pd.DateOffset(years=5))),
+        'TC Duração > 90 dias': lambda d: (d['Tipo'] == 'TC') & (d['Data Instauração'] < (target_datetime - pd.DateOffset(days=90))),
+    }
+    
+    # Inicializa a coluna de alertas simulados com listas vazias
+    simulated_alerts_col = 'Alertas Simulados'
+    df[simulated_alerts_col] = [[] for _ in range(len(df))]
+
+    # Aplica cada fórmula e preenche a lista de alertas para as linhas correspondentes
+    for alert_name, formula_func in alert_formulas.items():
+        # Garante que a operação de data não falhe em colunas com NaT
+        # Criamos a máscara apenas em dados não nulos para as colunas de data relevantes
+        relevant_date_cols = [col for col in ['Data Parecer', 'Data Cadastro', 'Data Vencimento', 'Data Cota', 'Data Instauração'] if col in df.columns and formula_func.__code__.co_names.__contains__(col)]
+        
+        # Previne erro com colunas de data que possam estar ausentes
+        if not all(col in df.columns for col in relevant_date_cols): continue
+            
+        subset = df.dropna(subset=relevant_date_cols)
+        if not subset.empty:
+            mask = formula_func(subset)
+            # Atualiza a lista de alertas para os índices que correspondem à máscara
+            valid_indices = subset[mask].index
+            df.loc[valid_indices, simulated_alerts_col] = df.loc[valid_indices, simulated_alerts_col].apply(lambda x: x + [alert_name])
+
+    return df
+
+def _render_aggregation_chart(
+    is_simulation_mode: bool,
+    df_alerted: pd.DataFrame, 
+    df_universe: pd.DataFrame,
+    group_by_col: str, 
+    alert_col: str,
+    key_suffix: str,
+    title: str,
+    filters: dict = None,
+    opt_visualization: bool = True,
+    secondary_group_by_col: str = None,
+    secondary_group_by_label: str = None):    
+    """Função reutilizável para renderizar os gráficos de agregação de alertas."""
+
+    # --- 1. Pré-cálculo de dependências a partir do st.session_state ---
+    # Isso permite reordenar os componentes visualmente, respeitando a lógica.
+    person_filter_key = f"alert_filter_{key_suffix}_{group_by_col}"
+
+    # --- 2. Controles de Visualização (Ordem Visual: 1) ---
+    num_cols = len(filters) + 1 if opt_visualization else len(filters)
+    filter_cols = st.columns(num_cols, vertical_alignment='top') if num_cols > 0 else []
+    if secondary_group_by_col:
+        num_cols += 1
+        filter_cols = st.columns(num_cols, vertical_alignment='bottom', gap="large") if num_cols > 0 else []
+    
+    view_options = ["Contagem Absoluta"]
+    if not is_simulation_mode:
+        view_options.append("Visão Percentual")
+    
+    with filter_cols[-1]:
+        if opt_visualization:
+            view_type = st.radio("Visualização", view_options, key=f"view_{key_suffix}", horizontal=True)
+        else:
+            view_type = "Visualização"
+
+    # Lógica para o checkbox de agrupamento secundário
+    use_secondary = False
+    if secondary_group_by_col:
+        with filter_cols[1]: # 2ª Coluna para o checkbox; # TODO: verificar se prejudicará outros gráficos que não o 'alertas por '
+            use_secondary = st.checkbox(secondary_group_by_label, key=f"toggle_secondary_group_{key_suffix}")
+ 
+    current_group_by_col = secondary_group_by_col if use_secondary else group_by_col
+
+    # --- 3. Filtros Específicos do Gráfico (Ordem Visual: 2) ---
+    selected_filters = {}
+    for i, (filter_name, filter_options) in enumerate(filters.items()):
+        with filter_cols[i]:
+            options = ["Todas"] + sorted(filter_options.dropna().unique().tolist())
+            selected_filters[filter_name] = st.selectbox(f"Filtrar por {filter_name}", options, key=f"alert_filter_{key_suffix}_{filter_name}")
+
+    # --- 4. KPIs e Denominador Dinâmico (Ordem Visual: 3) ---
+    df_universe_filtered = df_universe.copy()
+    for col, value in selected_filters.items():
+        if value != "Todas" and col in df_universe_filtered.columns:
+            df_universe_filtered = df_universe_filtered[df_universe_filtered[col] == value]
+
+    # Aplica todos os filtros selecionados no gráfico ao dataframe de alertas
+    df_filtered = df_alerted.copy()
+    for col, value in selected_filters.items():
+        if value != "Todas":
+            df_filtered = df_filtered[df_filtered[col] == value]
+ 
+    is_person_selected = (
+        group_by_col in [config.COL_DELEGADO, config.COL_ESCRIVAO] and
+        selected_filters.get(group_by_col, "Todas") != "Todas"
+    )
+
+    if is_person_selected:
+        selected_person = selected_filters[group_by_col]
+        
+        kpi1, kpi2 = st.columns(2)
+        # O KPI de total de alertas agora é calculado sobre o dataframe já filtrado
+        total_alerts_person = df_filtered[config.KEY_COLUMN_PRINCIPAL].nunique()
+        kpi1.metric(f"Total de Casos c/ Alertas ({selected_person})", f"{total_alerts_person:,}")        
+
+        # O denominador para o KPI também deve ser dinâmico
+        if not is_simulation_mode:
+            # Filtra o universo para a pessoa E os outros filtros (ex: delegacia)
+            total_cases_person = df_universe_filtered[config.KEY_COLUMN_PRINCIPAL].nunique()
+            percent_alerted = (total_alerts_person / total_cases_person * 100) if total_cases_person > 0 else 0
+            help_text = f"Calculado como: {total_alerts_person} (casos com alerta) / {total_cases_person} (casos totais do responsável)"
+            kpi2.metric(f"% de Casos c/ Alerta ({selected_person})", f"{percent_alerted:.2f}%", help=help_text)
+    
+    # --- 5. Lógica de Agregação e Visualização Dinâmica ---
+    if is_person_selected:
+        effective_group_by_col = alert_col
+        effective_title = f"Distribuição de Alertas para {selected_filters.get(current_group_by_col, '')}"
+    else:
+        effective_group_by_col = current_group_by_col
+        effective_title = title.replace(group_by_col, current_group_by_col) # Título dinâmico
+    
+    if not df_filtered.empty:
+        agg_data = df_filtered.groupby(effective_group_by_col)[config.KEY_COLUMN_PRINCIPAL].nunique().reset_index()
+        agg_data.rename(columns={config.KEY_COLUMN_PRINCIPAL: 'Contagem'}, inplace=True)
+    else:
+        agg_data = pd.DataFrame(columns=[effective_group_by_col, 'Contagem'])
+
+    # --- 6. Lógica de Cálculo e Ordenação ---
+    y_col, text_col, y_title, sort_by_col = ('Contagem', 'Contagem', f"Nº de Casos por {effective_group_by_col}", 'Contagem')
+    custom_data_cols = ['Contagem']
+    hovertemplate = '<b>%{x}</b><br>Nº de Casos: %{y}<extra></extra>' # <extra> remove a caixa secundária do hover    
+    
+    if view_type == "Visão Percentual" and not is_simulation_mode:
+        denominator = None
+        if is_person_selected:
+            # O denominador é o total de casos da pessoa selecionada, respeitando os outros filtros
+            denominator = df_universe_filtered[config.KEY_COLUMN_PRINCIPAL].nunique()
+        else:
+            # Lógica anterior para os outros gráficos
+            df_denominator_base = df_universe.copy()
+            for f_col, f_val in selected_filters.items():
+                if f_val != "Todas" and f_col != alert_col: # Ignora o filtro de alerta para o total
+                    df_denominator_base = df_denominator_base[df_denominator_base[f_col] == f_val]
+
+            if current_group_by_col == alert_col: # Gráfico de Tipos de Alerta
+                denominator = df_denominator_base[config.KEY_COLUMN_PRINCIPAL].nunique()
+            else: # Gráfico de Delegacia
+                denominator = df_denominator_base.groupby(effective_group_by_col)[config.KEY_COLUMN_PRINCIPAL].nunique()
+
+        if denominator is not None:
+            if isinstance(denominator, pd.Series):
+                agg_data = agg_data.merge(denominator.rename('Total Casos'), how='left', left_on=effective_group_by_col, right_index=True)
+            elif isinstance(denominator, (int, float)):
+                agg_data['Total Casos'] = denominator
+
+        if 'Total Casos' in agg_data.columns:
+            agg_data['Percentual'] = (agg_data['Contagem'] / agg_data['Total Casos'] * 100)
+            y_col, text_col = ('Percentual', 'Percentual')
+            # hover_data =  ['Contagem', 'Total Casos'],
+            y_title, sort_by_col = (f"% de Casos com Alerta por {effective_group_by_col}", 'Percentual')
+            custom_data_cols = ['Contagem', 'Total Casos']
+            hovertemplate = '<b>%{x}</b><br>Percentual: %{y:.2f}%<br>Casos com Alerta: %{customdata[0]} de %{customdata[1]}<extra></extra>'            
+    
+    agg_data = agg_data.sort_values(by=sort_by_col, ascending=False).head(20)
+
+    # --- 7. Renderização do Gráfico (Ordem Visual: 4) ---
+    if not agg_data.empty:        
+        fig = px.bar(
+            agg_data, 
+            x=effective_group_by_col, 
+            y=y_col, 
+            color=y_col, 
+            color_continuous_scale=escala_azul_truncada, 
+            # template = 'plotly_dark',
+            text=text_col, # title=effective_title
+            # hover_data=hover_data,
+            custom_data=custom_data_cols,
+            # labels={effective_group_by_col: effective_group_by_col} # y_col: y_title
+            labels={effective_group_by_col: "", "Contagem": ""} # Remove os títulos dos eixos; ou usa fig.update_layout(xaxis_title=None, yaxis_title=None)
+        )
+        # Define o formato do texto com base na coluna que está sendo plotada
+        text_template = '%{text:.2f}%' if y_col == 'Percentual' else '%{text}'
+        fig.update_traces(texttemplate=text_template, textposition='auto', hovertemplate=hovertemplate)
+        
+        fig.update_layout( font=dict(size=14), hoverlabel=dict(font=dict(size=16)) )
+        fig.update_layout(yaxis_title=None)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- 8. Botão de Exportação ---
+        excel_data = to_excel(df_filtered)
+        st.download_button(
+            label="📥 Exportar Dados Analíticos Filtrados (xlsx)",
+            data=excel_data,
+            file_name=f"{key_suffix}_casos_filtrados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"download_filtered_{key_suffix}",
+            use_container_width=True
+        )
+    else:
+        st.info("Nenhum dado para exibir com os filtros selecionados.")
+
+def display_alerts_analysis_tab(df: pd.DataFrame):
+    """Exibe a aba de Análise de Alertas e Simulações."""
+    c1, c2 = st.columns([0.8, 0.2], vertical_alignment="center")
+    with c1:
+        st.header("Análise e Simulação de Alertas")
+    with c2:
+        st.button(
+            "Recolher Tudo" if st.session_state.alerts_expanders_state else "Expandir Tudo",
+            on_click=state_manager.toggle_alerts_expanders_state, key="toggle_expand_alerts")    
+
+    # --- 1. Controle Principal (Seletor de Data) ---
+    target_date = st.date_input(
+        "Selecione a Data-Corte para Análise",
+        value=config.DATA_CORTE_ORIGINAL,
+        min_value=config.DATA_CORTE_ORIGINAL,
+        help="Selecione a data original para análise ou uma data futura para simulação."
+    )
+    is_simulation_mode = target_date > config.DATA_CORTE_ORIGINAL
+
+    # --- 2. Preparação dos Dados com base no modo ---
+    denominator_data = {}
+    if is_simulation_mode:
+        st.info(f"Modo Simulação ativado para a data {target_date.strftime('%d/%m/%Y')}. Os cálculos de percentual e a análise de saneamentos estão desabilitados.")
+        with st.spinner("Calculando alertas simulados..."):
+            df_analysis = calculate_dynamic_alerts(df, target_date)
+        alert_col = 'Alertas Simulados'
+        df_analysis = df_analysis[df_analysis[alert_col].apply(len) > 0] # Filtra casos sem alertas simulados
+    else:
+        st.info(f"Modo Análise com dados de {config.DATA_CORTE_ORIGINAL.strftime('%d/%m/%Y')}.")
+        df_analysis = df.copy()
+        alert_col = config.COL_ALERTA
+        # Prepara denominadores para cálculos de percentual
+    
+    # Prepara e explode o dataframe de análise, tratando strings de listas e removendo nulos.
+    df_exploded = prepare_explodable_data(df_analysis, alert_col)
+
+    st.divider()
+
+    # --- 3. Renderização dos Gráficos em Expanders ---
+    with st.expander("Cruzamento: Delegacia vs. Tipo de Alerta", expanded=st.session_state.alerts_expanders_state):
+        if not df_exploded.empty:
+            crosstab_df = pd.crosstab(df_exploded[alert_col], df_exploded[config.COL_DELEGACIA])
+            fig = px.imshow(crosstab_df, text_auto=True, aspect="auto",
+                            #labels=dict(x=f"<b>{config.COL_DELEGACIA}</b>", y=f"<b>{alert_col}</b>", color="Contagem"),
+                            labels=dict(x="", y="", color="Contagem"),
+                            color_continuous_scale=px.colors.sequential.Blues)
+            fig.update_xaxes(side="top")
+            fig.update_layout( font=dict(size=12), hoverlabel=dict(font=dict(size=16)) )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            excel_crosstab = to_excel(crosstab_df.reset_index())
+            st.download_button("📥 Exportar Tabela Cruzada (xlsx)", excel_crosstab, "crosstab_alertas.xlsx", use_container_width=True)
+        else:
+            st.info("Nenhum alerta para exibir.")
+
+    with st.expander("Análise por: TIPO ALERTA", expanded=st.session_state.alerts_expanders_state):
+        _render_aggregation_chart(
+            is_simulation_mode,
+            df_alerted=df_exploded, df_universe=df, group_by_col=alert_col, alert_col=alert_col, key_suffix="tipo_alerta",
+            title="Contagem de Casos por Tipo de Alerta",
+            filters={config.COL_DELEGACIA: df[config.COL_DELEGACIA]}
+        )
+
+    with st.expander("Análise por: DELEGACIA / LOTAÇÃO", expanded=st.session_state.alerts_expanders_state):
+        _render_aggregation_chart(
+            is_simulation_mode,
+            df_alerted=df_exploded, df_universe=df, group_by_col=config.COL_DELEGACIA, alert_col=alert_col, key_suffix="delegacia_lotacao",
+            title=f"Contagem de Casos com Alerta por {config.COL_DELEGACIA}",
+            filters={alert_col: df_exploded[alert_col]},
+            secondary_group_by_col=config.COL_LOTACAO,
+            secondary_group_by_label="Agrupar por Lotação"            
+        )
+    with st.expander("Análise por: DELEGADO(A)", expanded=st.session_state.alerts_expanders_state):
+        _render_aggregation_chart(
+            is_simulation_mode,
+            df_alerted=df_exploded, df_universe=df, group_by_col=config.COL_DELEGADO, alert_col=alert_col, key_suffix="delegado",
+            title="Contagem de Casos com Alerta por Delegado",
+            filters={config.COL_DELEGACIA: df[config.COL_DELEGACIA], alert_col: df_exploded[alert_col], config.COL_DELEGADO: df[config.COL_DELEGADO]}
+        )
+
+    with st.expander("Análise por: ESCRIVÃO(Ã)", expanded=st.session_state.alerts_expanders_state):
+        _render_aggregation_chart(
+            is_simulation_mode,
+            df_alerted=df_exploded, df_universe=df, group_by_col=config.COL_ESCRIVAO, alert_col=alert_col, key_suffix="escrivao",
+            title="Contagem de Casos com Alerta por Escrivão",
+            filters={config.COL_DELEGACIA: df[config.COL_DELEGACIA], alert_col: df_exploded[alert_col], config.COL_ESCRIVAO: df[config.COL_ESCRIVAO]},
+        )
+
+    if not is_simulation_mode:
+        with st.expander("Análise por: TIPO SANEAMENTO", expanded=st.session_state.alerts_expanders_state):
+            df_saneamento_exploded = prepare_explodable_data(df, config.COL_SANEAMENTO)
+            _render_aggregation_chart(
+                is_simulation_mode,
+                df_alerted=df_saneamento_exploded, df_universe=df, group_by_col=config.COL_SANEAMENTO, alert_col=config.COL_SANEAMENTO, key_suffix="saneamento",
+                title="Contagem de Casos por Tipo de Saneamento",
+                filters={
+                    config.COL_DELEGACIA: df[config.COL_DELEGACIA],
+                    config.COL_DELEGADO: df[config.COL_DELEGADO],
+                    config.COL_ESCRIVAO: df[config.COL_ESCRIVAO]
+                },
+                opt_visualization=False
+            )
 

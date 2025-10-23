@@ -7,6 +7,8 @@ def initialize_state():
     """Inicializa as variáveis no session_state se ainda não existirem."""
     if 'expanders_state' not in st.session_state:
         st.session_state.expanders_state = True # Inicia expandido
+    if 'alerts_expanders_state' not in st.session_state:
+        st.session_state.alerts_expanders_state = True # Estado para a aba de alertas        
 
     # Define os valores padrão dos filtros no estado da sessão
     # Isso evita conflitos com o parâmetro 'default' dos widgets
@@ -31,6 +33,10 @@ def initialize_state():
 def toggle_expanders_state():
     """Inverte o estado booleano de 'expanders_state'."""
     st.session_state.expanders_state = not st.session_state.expanders_state
+
+def toggle_alerts_expanders_state():
+    """Inverte o estado booleano de 'alerts_expanders_state'."""
+    st.session_state.alerts_expanders_state = not st.session_state.alerts_expanders_state
 
 def invalidate_excel_file():
     """Define o arquivo Excel no estado da sessão como None."""

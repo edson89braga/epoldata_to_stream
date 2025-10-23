@@ -30,8 +30,8 @@ def main():
     # gui_components.create_header(df_filtered)
 
     # Cria as abas principais da aplicação
-    tab_inicio, tab_geral, tab_agregacoes, tab_cruzada, tab_temporal = st.tabs([
-        "📊 Início", "📋 Tabela Geral", "📈 Agregações", "🔗 Análise Cruzada", "⏳ Série Temporal"
+    tab_inicio, tab_geral, tab_alertas , tab_agregacoes, tab_cruzada, tab_temporal = st.tabs([
+        "📊 Início", "📋 Tabela Geral", "🔎 Análise de Alertas", "📈 Agregações", "🔗 Análise Cruzada", "⏳ Análise Temporal"
     ])
 
     with tab_inicio:
@@ -40,6 +40,9 @@ def main():
     with tab_geral:
         # Passa o DF filtrado e as colunas selecionadas
         gui_components.display_general_table_tab(df_filtered)
+
+    with tab_alertas:
+        gui_components.display_alerts_analysis_tab(df_filtered)
 
     with tab_agregacoes:
         # A aba de agregações opera sobre os dados já filtrados
@@ -53,3 +56,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# >>> streamlit run app.py
