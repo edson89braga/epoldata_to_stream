@@ -735,6 +735,8 @@ def display_timeseries_tab(df: pd.DataFrame):
 def calculate_dynamic_alerts(_df: pd.DataFrame, target_date: date) -> pd.DataFrame:
     """
     Calcula dinamicamente os alertas para um DataFrame com base em uma data-alvo.
+    O resultado é CUMULATIVO: inclui tanto os casos que já tinham o alerta na
+    data-base original quanto os que passarão a tê-lo na data-alvo.
     """
     df = _df.copy()
     target_datetime = pd.to_datetime(target_date)
@@ -773,10 +775,25 @@ def calculate_dynamic_alerts(_df: pd.DataFrame, target_date: date) -> pd.DataFra
             
         subset = df.dropna(subset=relevant_date_cols)
         if not subset.empty:
-            mask = formula_func(subset)
-            # Atualiza a lista de alertas para os índices que correspondem à máscara
-            valid_indices = subset[mask].index
-            df.loc[valid_indices, simulated_alerts_col] = df.loc[valid_indices, simulated_alerts_col].apply(lambda x: x + [alert_name])
+            # 1. Identifica os casos que TERÃO o alerta na data-alvo (simulação)
+            mask_futuro = formula_func(subset)
+            indices_futuros = subset[mask_futuro].index
+
+            # 2. Identifica os casos que JÁ TÊM o alerta na data-base original
+            # A função `has_alert` lida com células que podem ser listas ou nulas
+            def has_alert(alert_list):
+                return isinstance(alert_list, list) and alert_name in alert_list
+            
+            mask_atual = df[config.COL_ALERTA].apply(has_alert)
+            indices_atuais = df[mask_atual].index
+
+            # 3. Combina os dois grupos de casos, removendo duplicatas
+            # O método .union() de índices do Pandas é perfeito para isso
+            indices_combinados = indices_atuais.union(indices_futuros)
+
+            # 4. Atualiza a lista de alertas para todos os casos do grupo combinado
+            if not indices_combinados.empty:
+                df.loc[indices_combinados, simulated_alerts_col] = df.loc[indices_combinados, simulated_alerts_col].apply(lambda x: x + [alert_name])
 
     return df
 

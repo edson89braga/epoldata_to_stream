@@ -4,7 +4,7 @@ from datetime import date
 from typing import Dict, List, Set, Union
 
 # --- Paths and Constants ---
-DATA_CORTE_ORIGINAL: date = date(2025, 10, 23)
+DATA_CORTE_ORIGINAL: date = date(2025, 11, 10)
 
 data_str = DATA_CORTE_ORIGINAL.strftime("%d-%m-%Y")
 data_str2 = DATA_CORTE_ORIGINAL.strftime("%d/%m/%Y")

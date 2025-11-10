@@ -834,141 +834,178 @@ def pipeline_tratatamento_dados_1():
 
 @timer_decorator
 def pipeline_tratatamento_dados_2():
-    base_name = "Casos_SP_23-10-2025" # filtros: UF ('SP'), Situação ('Em Andamento'), Data de extração: **dd/mm/2025**
+    base_name = "Casos_SP_10-11-2025" # filtros: UF ('SP'), Situação ('Em Andamento'), Data de extração: **dd/mm/2025**
+    output_path_0 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Completo.parquet"
+    output_path_f = os.path.join('data', f"{base_name}_Tratado.parquet")
 
     xlsx_principal = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}.xlsx"
     xlsx_complementar1 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoAlertas.xlsx"
     xlsx_complementar2 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoSaneamentos.xlsx" 
     xlsx_complementar3 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Complementar.xlsx" # Incluída coluna 'Proc. Data Cota'
 
-    path_parquet_df_principal = convert_spreadsheet_to_parquet(xlsx_principal) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}.parquet"
-    path_parquet_df_complementar1 = convert_spreadsheet_to_parquet(xlsx_complementar1) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoAlertas.parquet"
-    path_parquet_df_complementar2 = convert_spreadsheet_to_parquet(xlsx_complementar2) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoSaneamentos.parquet"
-    path_parquet_df_complementar3 = convert_spreadsheet_to_parquet(xlsx_complementar3) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Complementar.parquet"
+    path_parquet_df_principal = Path(xlsx_principal).with_suffix('.parquet')
+    path_parquet_df_complementar1 = Path(xlsx_complementar1).with_suffix('.parquet')
+    path_parquet_df_complementar2 = Path(xlsx_complementar2).with_suffix('.parquet')
+    path_parquet_df_complementar3 = Path(xlsx_complementar3).with_suffix('.parquet')
 
-    # O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'
-    df_principal  = pd.read_parquet(path_parquet_df_principal)
-    assert 'Proc. Identificação' in df_principal.columns and df_principal['Proc. Identificação'].nunique() == df_principal.shape[0], "O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'"
+    if not os.path.exists(output_path_f):
+        if not os.path.exists(output_path_0):
 
-    df_complementar1 = pd.read_parquet(path_parquet_df_complementar1)
-    df_complementar2 = pd.read_parquet(path_parquet_df_complementar2)
-    df_complementar3 = pd.read_parquet(path_parquet_df_complementar3)
+            if not os.path.exists(path_parquet_df_principal):
+                path_parquet_df_principal = convert_spreadsheet_to_parquet(xlsx_principal) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}.parquet"
+            if not os.path.exists(path_parquet_df_complementar1):
+                path_parquet_df_complementar1 = convert_spreadsheet_to_parquet(xlsx_complementar1) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoAlertas.parquet"
+            if not os.path.exists(path_parquet_df_complementar2):
+                path_parquet_df_complementar2 = convert_spreadsheet_to_parquet(xlsx_complementar2) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_TipoSaneamentos.parquet"
+            if not os.path.exists(path_parquet_df_complementar3):        
+                path_parquet_df_complementar3 = convert_spreadsheet_to_parquet(xlsx_complementar3) # rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Complementar.parquet"
 
-    # O df_complementar possui 'Proc. Identificação' duplicados em razão das colunas 'Proc. Alerta Tipo' constar explodida
-    assert confirm_cols_exploded(df_complementar1, 'Proc. Identificação') == ['Proc. Alerta Tipo']
-    assert confirm_cols_exploded(df_complementar2, 'Proc. Identificação') == ['Proc. Alerta Tipo', 'Proc. Saneamento Tipo', 'Proc. Prescrição Situação']
+            print("\n >>> Conversões de arquivos xlsx para parquet concluídas! \n")
 
-    # Tratando df_complementar1 
-    n_procs_anterior1 = df_complementar1['Proc. Identificação'].unique().shape[0]
-    df_complementar_tratado1 = aggregate_column_to_list(df=df_complementar1, 
-                                                        key_column='Proc. Identificação', 
-                                                        columns_to_aggregate=['Proc. Alerta Tipo'])
-    assert df_complementar_tratado1.shape[0] == n_procs_anterior1
+            # O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'
+            df_principal  = pd.read_parquet(path_parquet_df_principal)
+            assert 'Proc. Identificação' in df_principal.columns and df_principal['Proc. Identificação'].nunique() == df_principal.shape[0], "O df_principal deve possuir a coluna de valores únicos 'Proc. Identificação'"
+            df_complementar1 = pd.read_parquet(path_parquet_df_complementar1)
+            df_complementar2 = pd.read_parquet(path_parquet_df_complementar2)
+            if path_parquet_df_complementar3:
+                df_complementar3 = pd.read_parquet(path_parquet_df_complementar3)
+            else:
+                df_complementar3 = pd.DataFrame(columns=['Proc. Identificação']).astype(object)
 
-    # Tratando df_complementar2
-    n_procs_anterior2 = df_complementar2['Proc. Identificação'].unique().shape[0]
-    df_complementar2 = df_complementar2[['Proc. Identificação', 'Proc. Saneamento Tipo']]
-    df_complementar_tratado2 = aggregate_column_to_list(df=df_complementar2, 
-                                                        key_column='Proc. Identificação', 
-                                                        columns_to_aggregate=['Proc. Saneamento Tipo'])
-    assert df_complementar_tratado2.shape[0] == n_procs_anterior2
-    
-    # df_complementar_tratado.to_parquet(rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar_Tratado.parquet")
+            # O df_complementar possui 'Proc. Identificação' duplicados em razão das colunas 'Proc. Alerta Tipo' constar explodida
+            assert confirm_cols_exploded(df_complementar1, 'Proc. Identificação') == ['Proc. Alerta Tipo']
+            assert confirm_cols_exploded(df_complementar2, 'Proc. Identificação') == ['Proc. Alerta Tipo', 'Proc. Saneamento Tipo', 'Proc. Prescrição Situação']
+            
+            print(" >>> Confirmadas colunas explodidas.")
 
-    df_completo = merge_dataframes(df_principal, [df_complementar_tratado1, df_complementar_tratado2, df_complementar3], 
-                                    key_column='Proc. Identificação', how='left')
+            # Tratando df_complementar1 
+            n_procs_anterior1 = df_complementar1['Proc. Identificação'].unique().shape[0]
+            df_complementar_tratado1 = aggregate_column_to_list(df=df_complementar1, 
+                                                                key_column='Proc. Identificação', 
+                                                                columns_to_aggregate=['Proc. Alerta Tipo'])
+            assert df_complementar_tratado1.shape[0] == n_procs_anterior1
+            print(" >>> Agregada 'Proc. Alerta Tipo' em df_complementar1")
+                
+            # Tratando df_complementar2
+            n_procs_anterior2 = df_complementar2['Proc. Identificação'].unique().shape[0]
+            df_complementar2 = df_complementar2[['Proc. Identificação', 'Proc. Saneamento Tipo']]
+            df_complementar_tratado2 = aggregate_column_to_list(df=df_complementar2, 
+                                                                key_column='Proc. Identificação', 
+                                                                columns_to_aggregate=['Proc. Saneamento Tipo'])
+            assert df_complementar_tratado2.shape[0] == n_procs_anterior2
+            print(" >>> Agregada 'Proc. Saneamento Tipo' em df_complementar2")
+            print("\n")
 
-    assert df_principal.shape[0] == df_completo.shape[0], "O df_principal deve possuir a mesma quantidade de linhas do df_completo"
-    assert df_principal.shape[1] < df_completo.shape[1], "O df_principal deve possuir menos colunas do que o df_completo"
+            # df_complementar_tratado.to_parquet(rf"C:\\Users\\edson.eab\\Downloads\\{file_name}_Complementar_Tratado.parquet")
 
-    output_path_0 = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Completo.parquet"
-    df_completo.to_parquet(output_path_0, index=False)
+            df_completo = merge_dataframes(df_principal, [df_complementar_tratado1, df_complementar_tratado2, df_complementar3], 
+                                            key_column='Proc. Identificação', how='left')
 
-    # df['Proc. Identificação'].value_counts()
-    # df.duplicated().sum()
-
-    # --- ---------------------------------------------------------------------
-    # Conferências de confrontamento:
-    tipos_alertas = [
-        'NCV Pendente Parecer > 15 dias',
-        'NC Pendente Parecer > 15 dias',
-        'NC Pendente Instauração > 30 dias',
-        'CP Vencido > 10 dias',
-        'TC Vencido > 10 dias',
-        'RE Vencido > 10 dias',
-        'MP Vencido > 10 dias',
-        'NCV Vencido > 90 dias',
-        'NC Vencido > 90 dias',
-        'IPL Vencido > 10 dias',
-        'IPL Cota Duração > 1 ano', 
-        'IPL Duração > 3 anos',
-        'IPL Duração > 5 anos',
-        'TC Duração > 90 dias'
-    ]
-    df = df_completo
-    # datetime_target = datetime(2025, 10, 20)
-    datetime_target = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
-    dfs_filtros = [
-        df.loc[(df['Proc. Tipo']=='NCV') & (df['Situação Sigla']=='Aguardando Parecer')    & (datetime_target-df['Data Parecer'] > timedelta(days=15))],
-        df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Parecer')     & (datetime_target-df['Data Cadastro'] > timedelta(days=15))],
-        df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Instauração') & (datetime_target-df['Data Parecer'] > timedelta(days=30))],
-        df.loc[(df['Proc. Tipo']=='CP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
-        df.loc[(df['Proc. Tipo']=='TC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
-        df.loc[(df['Proc. Tipo']=='RE') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
-        df.loc[(df['Proc. Tipo']=='MP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
-        df.loc[(df['Proc. Tipo']=='NCV') & (datetime_target-df['Data Vencimento']>= timedelta(days=91))],
-        df.loc[(df['Proc. Tipo']=='NC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=91))],
-        df.loc[(df['Proc. Tipo']=='IPL') & (datetime_target-df['Data Vencimento']>= timedelta(days=11)) & (~df['Situação Sigla'].isin(['Apreciação', 'Pedido de Baixa']))],
-        df.loc[(df['Proc. Tipo']=='IPL') & (df['Proc. Data Cota'] <  ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=1)) )],
-        df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=3)) )],
-        df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=5)) )],
-        df.loc[(df['Proc. Tipo']=='TC')  & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(days=90)) )],
-    ]
-
-    registros_extras = {}
-    for tipo_alerta, df_check in zip(tipos_alertas, dfs_filtros):
-        print('\n')
-        df_a = df_check
-        df_b = df_complementar1.loc[df_complementar1['Proc. Alerta Tipo']==tipo_alerta]
-        #
-        set_a = set(df_a['Proc. Identificação'])
-        set_b = set(df_b['Proc. Identificação'])
-        #
-        if set_a == set_b: 
-            print(f"Alerta '{tipo_alerta}' OK")
+            assert df_principal.shape[0] == df_completo.shape[0], "O df_principal deve possuir a mesma quantidade de linhas do df_completo"
+            assert df_principal.shape[1] < df_completo.shape[1], "O df_principal deve possuir menos colunas do que o df_completo"
+            
+            df_completo.to_parquet(output_path_0, index=False)
         else:
-            if set_b - set_a:
-                print(f"Alerta '{tipo_alerta}' FALTAndo registros: !!! !!! !!!")
-                print(set_b - set_a)
-                # raise ValueError(f"Alerta '{tipo_alerta}' FALTAndo registros!")
-            elif set_a - set_b:
-                print(f"Alerta '{tipo_alerta}' EXTRAs:")
-                print(set_a - set_b)
-                registros_extras[tipo_alerta] = set_a - set_b
-    # --- -------------------------------------------------------------------
+            df_complementar1 = pd.read_parquet(path_parquet_df_complementar1)
+            df_completo = pd.read_parquet(output_path_0)
 
-    df_reduzido = filter_columns(df_completo, colunas_uteis)
-    # column_info = detect_column_types(df_reduzido) # print(column_info) 
+        print("\n >>> Merge completo procedido com sucesso! \n")
+            
+        # df['Proc. Identificação'].value_counts()
+        # df.duplicated().sum()
 
-    df_final, _ = apply_column_types(df_reduzido, type_mapping)
-    print(df_final.info())
+        # --- ---------------------------------------------------------------------
+        # Conferências de confrontamento:
+        tipos_alertas = [
+            'NCV Pendente Parecer > 15 dias',
+            'NC Pendente Parecer > 15 dias',
+            'NC Pendente Instauração > 30 dias',
+            'CP Vencido > 10 dias',
+            'TC Vencido > 10 dias',
+            'RE Vencido > 10 dias',
+            'MP Vencido > 10 dias',
+            'NCV Vencido > 90 dias',
+            'NC Vencido > 90 dias',
+            'IPL Vencido > 10 dias',
+            'IPL Cota Duração > 1 ano', 
+            'IPL Duração > 3 anos',
+            'IPL Duração > 5 anos',
+            'TC Duração > 90 dias'
+        ]
+        df = df_completo
+        # datetime_target = datetime(2025, 10, 20)
+        datetime_target = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+        dfs_filtros = [
+            df.loc[(df['Proc. Tipo']=='NCV') & (df['Situação Sigla']=='Aguardando Parecer')    & (datetime_target-df['Data Parecer'] > timedelta(days=15))],
+            df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Parecer')     & (datetime_target-df['Data Cadastro'] > timedelta(days=15))],
+            df.loc[(df['Proc. Tipo']=='NC') & (df['Situação Sigla']=='Aguardando Instauração') & (datetime_target-df['Data Parecer'] > timedelta(days=30))],
+            df.loc[(df['Proc. Tipo']=='CP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+            df.loc[(df['Proc. Tipo']=='TC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+            df.loc[(df['Proc. Tipo']=='RE') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+            df.loc[(df['Proc. Tipo']=='MP') & (datetime_target-df['Data Vencimento'] >= timedelta(days=11))],
+            df.loc[(df['Proc. Tipo']=='NCV') & (datetime_target-df['Data Vencimento']>= timedelta(days=91))],
+            df.loc[(df['Proc. Tipo']=='NC') & (datetime_target-df['Data Vencimento'] >= timedelta(days=91))],
+            df.loc[(df['Proc. Tipo']=='IPL') & (datetime_target-df['Data Vencimento']>= timedelta(days=11)) & (~df['Situação Sigla'].isin(['Apreciação', 'Pedido de Baixa']))],
+            df.loc[(df['Proc. Tipo']=='IPL') & (df['Proc. Data Cota'] <  ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=1)) )] if 'Proc. Data Cota' in df.columns else None,
+            df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=3)) )],
+            df.loc[(df['Proc. Tipo']=='IPL') & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(years=5)) )],
+            df.loc[(df['Proc. Tipo']=='TC')  & (df['Data Instauração'] < ((datetime_target + timedelta(days=1)) - pd.DateOffset(days=90)) )],
+        ]
 
-    df_final = df_final.rename(columns=rename_cols_mapping)
-    df_final = obfuscate_name_columns(df_final, ["Delegado Atual", "Escrivão"])
+        registros_extras = {}
+        for tipo_alerta, df_check in zip(tipos_alertas, dfs_filtros):
+            print('\n')
+            df_a = df_check
+            df_b = df_complementar1.loc[df_complementar1['Proc. Alerta Tipo']==tipo_alerta]
+            #
+            if df_a is None:
+                print(f" >>> Alerta '{tipo_alerta}' sem registros capturados! ")
+                continue 
 
-    # info_df = create_info_dataframe(df_final) # print(info_df) # já feito em print_dataframe_info
+            set_a = set(df_a['Proc. Identificação'])
+            set_b = set(df_b['Proc. Identificação'])
+            #
+            if set_a == set_b: 
+                print(f"Alerta '{tipo_alerta}' OK")
+            else:
+                if set_b - set_a:
+                    print(f"Alerta '{tipo_alerta}' FALTAndo registros: !!! !!! !!!")
+                    print(set_b - set_a)
+                    # raise ValueError(f"Alerta '{tipo_alerta}' FALTAndo registros!")
+                elif set_a - set_b:
+                    print(f"Alerta '{tipo_alerta}' EXTRAs:")
+                    print(set_a - set_b)
+                    registros_extras[tipo_alerta] = set_a - set_b
+        # --- -------------------------------------------------------------------
 
+        df_reduzido = filter_columns(df_completo, colunas_uteis)
+        # column_info = detect_column_types(df_reduzido) # print(column_info) 
+
+        df_final, _ = apply_column_types(df_reduzido, type_mapping)
+        print(df_final.info())
+
+        df_final = df_final.rename(columns=rename_cols_mapping)
+        df_final = obfuscate_name_columns(df_final, ["Delegado Atual", "Escrivão"])
+
+        # info_df = create_info_dataframe(df_final) # print(info_df) # já feito em print_dataframe_info
+
+        df_final.to_parquet(output_path_f, index=False)
+
+    else:
+        print(" \n >>> Dataframe final tratado e já salvo em 'data'! ")
+        df_final = pd.read_parquet(output_path_f)
+    
     print_dataframe_info(df_final)
-
-    output_path = rf"C:\\Users\\edson.eab\\Downloads\\{base_name}_Tratado.parquet"
-    df_final.to_parquet(output_path, index=False)
 
     # filtered_df = df.loc[df['Proc. Situação'] == "Em Andamento"]
     # exloded_df = filtered_df.explode('Proc. Tipo Penal')
     # exloded_df.to_excel(r"C:\\Users\\edson.eab\\Downloads\\{file_name}_TiposPenal.xlsx", index=False)
 
-    return output_path
+    print("\n >>> Tratamento concluído =D")
+    return output_path_f
 
+# >>> python -i data_processing.py
+# >>> pipeline_tratatamento_dados_2()
 
 '''
 
