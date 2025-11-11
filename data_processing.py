@@ -195,7 +195,7 @@ def apply_column_types(
                 # Isso garante que a representação da lista seja uma string bem formatada.
                 def smart_string_converter(x):
                     if isinstance(x, (list, dict)):
-                        return json.dumps(x)
+                        return json.dumps(x, ensure_ascii=False)
                     return str(x)
 
                 df_typed[col] = df_typed[col].fillna("").apply(smart_string_converter)
