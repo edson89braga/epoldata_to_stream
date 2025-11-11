@@ -5,6 +5,8 @@ from . import config
 
 def initialize_state():
     """Inicializa as variáveis no session_state se ainda não existirem."""
+    if 'filter_change_counter' not in st.session_state:
+        st.session_state.filter_change_counter = 0    
     if 'expanders_state' not in st.session_state:
         st.session_state.expanders_state = True # Inicia expandido
     if 'alerts_expanders_state' not in st.session_state:
@@ -37,6 +39,11 @@ def toggle_expanders_state():
 def toggle_alerts_expanders_state():
     """Inverte o estado booleano de 'alerts_expanders_state'."""
     st.session_state.alerts_expanders_state = not st.session_state.alerts_expanders_state
+
+def handle_filter_change():
+    """Callback para qualquer alteração de filtro na sidebar."""
+    st.session_state.filter_change_counter += 1
+    invalidate_excel_file()
 
 def invalidate_excel_file():
     """Define o arquivo Excel no estado da sessão como None."""

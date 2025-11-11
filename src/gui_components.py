@@ -64,8 +64,10 @@ def display_active_filters():
     """Exibe um resumo dos filtros que foram aplicados na barra lateral."""
     active_filters = []
     for key, value in st.session_state.items():
-        if key.startswith("filter_") and value:
-            col_name = key.replace("filter_", "")
+        # Garante que estamos processando apenas filtros (que são listas) e não outros
+        # valores de estado, como o filter_change_counter (que é um int).
+        if key.startswith("filter_") and isinstance(value, list) and value:
+            col_name = key.replace("filter_", "").replace("_", " ")
             # Formata o valor para exibição
             value_str = ", ".join(map(str, value))
             active_filters.append(f"**{col_name}:** `{value_str}`")
@@ -152,7 +154,7 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                 f"{col}",
                 options=options,
                 key=f"filter_{col}", # Adiciona uma key prefixada
-                on_change=state_manager.invalidate_excel_file
+                on_change=state_manager.handle_filter_change
             )
             if selected:
                 df_filtered = df_filtered[df_filtered[col].isin(selected)]
@@ -167,7 +169,7 @@ def create_sidebar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                     options=options,
                     default=[],
                     key=f"filter_{col}", # Adiciona uma key prefixada
-                    on_change=state_manager.invalidate_excel_file
+                    on_change=state_manager.handle_filter_change
                 )
                 if selected:
                     df_filtered = df_filtered[df_filtered[col].isin(selected)]
@@ -732,13 +734,18 @@ def display_timeseries_tab(df: pd.DataFrame):
     )
 
 @st.cache_data
-def calculate_dynamic_alerts(_df: pd.DataFrame, target_date: date) -> pd.DataFrame:
+def calculate_dynamic_alerts(df_full: pd.DataFrame, target_date: date, active_filters: dict) -> pd.DataFrame:
     """
     Calcula dinamicamente os alertas para um DataFrame com base em uma data-alvo.
     O resultado é CUMULATIVO: inclui tanto os casos que já tinham o alerta na
     data-base original quanto os que passarão a tê-lo na data-alvo.
     """
-    df = _df.copy()
+    # 1. Aplicar os filtros do sidebar AO DataFrame completo (df_full)
+    df = df_full.copy()
+    for col, values in active_filters.items():
+        if values:
+            df = df[df[col].isin(values)]
+
     target_datetime = pd.to_datetime(target_date)
 
     # Dicionário de Fórmulas. Mapeia o nome do alerta a uma função lambda que retorna uma máscara booleana.
@@ -972,7 +979,7 @@ def _render_aggregation_chart(
     else:
         st.info("Nenhum dado para exibir com os filtros selecionados.")
 
-def display_alerts_analysis_tab(df: pd.DataFrame):
+def display_alerts_analysis_tab(df: pd.DataFrame, df_full: pd.DataFrame):
     """Exibe a aba de Análise de Alertas e Simulações."""
     c1, c2 = st.columns([0.8, 0.2], vertical_alignment="center")
     with c1:
@@ -996,7 +1003,14 @@ def display_alerts_analysis_tab(df: pd.DataFrame):
     if is_simulation_mode:
         st.info(f"Modo Simulação ativado para a data {target_date.strftime('%d/%m/%Y')}. Os cálculos de percentual e a análise de saneamentos estão desabilitados.")
         with st.spinner("Calculando alertas simulados..."):
-            df_analysis = calculate_dynamic_alerts(df, target_date)
+            # Extrai apenas os filtros ativos (chaves que começam com 'filter_' e têm valor)
+            current_active_filters = {
+                key.replace("filter_", ""): values 
+                for key, values in st.session_state.items() 
+                if key.startswith("filter_") and isinstance(values, list) and values
+            }
+            # Passa o DataFrame COMPLETO e o dicionário de filtros para a função cacheada
+            df_analysis = calculate_dynamic_alerts(df_full, target_date, current_active_filters)
         alert_col = 'Alertas Simulados'
         df_analysis = df_analysis[df_analysis[alert_col].apply(len) > 0] # Filtra casos sem alertas simulados
     else:

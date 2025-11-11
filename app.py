@@ -42,7 +42,7 @@ def main():
         gui_components.display_general_table_tab(df_filtered)
 
     with tab_alertas:
-        gui_components.display_alerts_analysis_tab(df_filtered)
+        gui_components.display_alerts_analysis_tab(df_filtered, df_full=df_tratado)
 
     with tab_agregacoes:
         # A aba de agregações opera sobre os dados já filtrados
