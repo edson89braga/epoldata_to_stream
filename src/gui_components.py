@@ -766,6 +766,9 @@ def calculate_dynamic_alerts(_df: pd.DataFrame, target_date: date) -> pd.DataFra
 
     # Aplica cada fórmula e preenche a lista de alertas para as linhas correspondentes
     for alert_name, formula_func in alert_formulas.items():
+        if alert_name == 'IPL Cota Duração > 1 ano' and 'Data Cota' not in df.columns:
+            continue
+
         # Garante que a operação de data não falhe em colunas com NaT
         # Criamos a máscara apenas em dados não nulos para as colunas de data relevantes
         relevant_date_cols = [col for col in ['Data Parecer', 'Data Cadastro', 'Data Vencimento', 'Data Cota', 'Data Instauração'] if col in df.columns and formula_func.__code__.co_names.__contains__(col)]
