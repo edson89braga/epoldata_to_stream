@@ -191,9 +191,15 @@ def apply_column_types(
             original_nulls = df_typed[col].isna().sum()
 
             if target_type == "string":
-                # Usar .apply(str) é mais robusto para garantir que todos os elementos virem strings
-                df_typed[col] = df_typed[col].fillna("").apply(str)
-                conversion_log.append(f"✅ {col}: convertido para string")
+                # Conversão inteligente: usa json.dumps para listas, str() para o resto.
+                # Isso garante que a representação da lista seja uma string bem formatada.
+                def smart_string_converter(x):
+                    if isinstance(x, (list, dict)):
+                        return json.dumps(x)
+                    return str(x)
+
+                df_typed[col] = df_typed[col].fillna("").apply(smart_string_converter)
+                conversion_log.append(f"✅ {col}: convertido para string (com suporte a listas JSON)")
 
             elif target_type == "numeric":
                 df_typed[col] = pd.to_numeric(df_typed[col], errors="coerce")
@@ -473,7 +479,10 @@ def aggregate_column_to_list(
 
     # Adiciona a regra de agregação para cada coluna na lista
     for col_agg in columns_to_aggregate:
-        agg_rules[col_agg] = list
+        # Usar uma lambda com .tolist() garante que o resultado seja sempre uma
+        # lista Python, e não um array NumPy, que tem uma representação de
+        # string diferente (sem vírgulas).
+        agg_rules[col_agg] = lambda x: x.tolist()
 
     df_aggregated = df.groupby(key_column).agg(agg_rules).reset_index()
     
